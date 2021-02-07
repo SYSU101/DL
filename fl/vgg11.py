@@ -20,6 +20,7 @@ class VGG11(nn.Module):
     return x
   
   def forward(self, x):
+    x.requires_grad_(True)
     x = self.features(x)
     x = self.avgpool(x)
     x = torch.flatten(x, 1)
