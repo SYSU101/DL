@@ -1,0 +1,37 @@
+import torch
+import sys
+from sys import stdout
+from torch.utils.data import DataLoader
+
+def test_accuracy(model, testset, device):
+  tests = DataLoader(testset, batch_size=1, shuffle=True)
+  total = 0
+  correct = 0
+  for data in tests:
+    image, label = data
+    outputs = model(image.to(device))
+    predicted = torch.argmax(outputs.data, 1)
+    total += 1
+    correct += (predicted == label).sum().item()
+    if total > 100:
+      break
+  return correct/total
+
+def debug_print(*args, **kwargs):
+  print(*args, **kwargs)
+  stdout.flush()
+
+def save_lists(path, *lists):
+  f = open(path, 'w')
+  for l in lists:
+    f.write(','.join(map(str, l)))
+    f.write('\n')
+  f.close()
+
+def read_lists(path):
+  lists = []
+  f = open(path, 'r')
+  lines = f.readlines()
+  for line in lines:
+    lists.append(list(map(float, line.split(','))))
+  return lists
