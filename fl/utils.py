@@ -35,3 +35,12 @@ def read_lists(path):
   for line in lines:
     lists.append(list(map(float, line.split(','))))
   return lists
+
+def once(fn):
+  tag = True
+  def do_once(*args, **kwargs):
+    nonlocal tag
+    if tag:
+      fn(*args, **kwargs)
+      tag = False
+  return do_once
