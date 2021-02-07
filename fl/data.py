@@ -25,17 +25,17 @@ def gen_partitions(data, indexes, sizes):
     dataset.append(partition)
   return dataset
 
-def gen_iid_dataset(data, seed = config.rand_seed, sizes = config.data_distribution):
+def gen_iid_dataset(data, seed = config.rand_seed, sample_num = config.sample_num, sizes = config.data_distribution):
   engine = Random()
   engine.seed(seed)
-  idx = engine.sample(range(len(data)), 1000)
+  idx = engine.sample(range(len(data)), sample_num)
   engine.shuffle(idx)
   return gen_partitions(data, idx, sizes)
 
-def gen_non_iid_dataset(data, seed = config.rand_seed, sizes = config.data_distribution):
+def gen_non_iid_dataset(data, seed = config.rand_seed, sample_num = config.sample_num, sizes = config.data_distribution):
   engine = Random()
   engine.seed(seed)
-  idx = engine.sample(range(len(data)), 1000)
+  idx = engine.sample(range(len(data)), sample_num)
   idx = [(i, data[i][1]) for i in idx]
   idx.sort(key=lambda ele: ele[1])
   idx = [ele[0] for ele in idx]
