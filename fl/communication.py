@@ -6,25 +6,25 @@ from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
 
-fmtCode = {
+fmt_code = {
   torch.float32: Template('>${num}f'),
   torch.float64: Template('>${num}d'),
 }
 
-byteSize = {
+byte_size = {
   torch.float32: 4,
   torch.float64: 8,
 }
 
 def get_fmt_code(dtype):
-  if not dtype in fmtCode:
+  if not dtype in fmt_code:
     raise RuntimeError('dtype %s is not supported'%tensor.dtype)
-  return fmtCode.get(dtype)
+  return fmt_code.get(dtype)
 
 def get_byte_size(dtype):
-  if not dtype in byteSize:
+  if not dtype in byte_size:
     raise RuntimeError('dtype %s is not supported'%tensor.dtype)
-  return byteSize.get(dtype)
+  return byte_size.get(dtype)
 
 def tensor2bytes(tensor, buffer):
   fmt = get_fmt_code(tensor.dtype).substitute(num = '')
