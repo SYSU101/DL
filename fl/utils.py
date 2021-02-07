@@ -12,7 +12,7 @@ def test_accuracy(model, testset, device):
     outputs = model(image.to(device))
     predicted = torch.argmax(outputs.data, 1)
     total += 1
-    correct += (predicted == label).sum().item()
+    correct += (predicted == label.to(device)).sum().item()
     if total > 100:
       break
   return correct/total

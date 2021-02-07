@@ -1,5 +1,4 @@
 #! /usr/bin/env python3.8
-from torchvision import datasets, transforms
 from .data import download_datasets, download_testsets, gen_iid_dataset, gen_non_iid_dataset
 
 def parse(argv):

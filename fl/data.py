@@ -3,6 +3,7 @@ from . import config
 from torch import argmax
 from random import Random
 from math import ceil
+from torchvision import datasets, transforms
 
 class Partition(object):
   def __init__(self, data, idx):
@@ -52,9 +53,9 @@ def download(origin, is_gray, train):
     'root': './fl/data',
     'train': train,
     'download': True,
-    'transform': transform
+    'transform': transforms.Compose(transform)
   }
-  return origin(download)
+  return origin(**download_args)
 
 def download_datasets(argv):
   if '--cifar' in argv:

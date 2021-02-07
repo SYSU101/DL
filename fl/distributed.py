@@ -12,10 +12,10 @@ def init_process(rank, world_size, fn, args):
   dist.init_process_group('gloo', rank=rank, world_size=world_size)
   fn(rank, world_size, *args)
 
-def simulate(server_fn, server_args, client_fn, client_num = config.client_num, gen_client_args):
+def simulate(server_fn, server_args, client_fn, gen_client_args, client_num = config.client_num):
   world_size = client_num+1
   processes = [
-    Process(target=init_process, args=(0, world_size, serverfn, server_args))
+    Process(target=init_process, args=(0, world_size, server_fn, server_args))
   ]
   for rank in range(1, client_num+1):
     client_args = gen_client_args(rank)

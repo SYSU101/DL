@@ -71,7 +71,7 @@ def train(datasets, testset, is_iid = True):
     server_fn = server_fn,
     server_args = (testset,),
     client_fn = client_fn,
-    gen_client_args = lambda rank: (datasets[rank],)
+    gen_client_args = lambda rank: (datasets[rank-1],)
   )
   save_lists('%s.acc.txt'%name,
     accuracies,
