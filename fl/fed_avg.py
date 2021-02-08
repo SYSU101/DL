@@ -22,7 +22,7 @@ def client_fn(rank, world_size, dataset):
   model = VGG11(num_classes = 10)
   model.to(device)
   criterion = CrossEntropyLoss()
-  sgd = SGD(model.parameters(), 1e-3, 0.9)
+  sgd = SGD(model.parameters(), lr = 8e-5, momentum = 0.4)
   model.train()
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters())
@@ -34,6 +34,7 @@ def client_fn(rank, world_size, dataset):
         loss = criterion(output.to(device), target.to(device))
         loss.backward()
         sgd.step()
+      decay_learning_rate(sgd, alpha = 0.8, min_lr = 1e-7)
     send_params(model.parameters())
 
 def server_fn(rank, world_size, testset):
