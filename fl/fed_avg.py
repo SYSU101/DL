@@ -6,7 +6,7 @@ from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader
 from . import flag, config, distributed
 from .communication import send_params, recv_params
-from .utils import test_accuracy, debug_print, save_lists
+from .utils import test_accuracy, debug_print, save_lists, decay_learning_rate
 from .vgg11 import VGG11
 
 LOCAL_EPOCH = 10
