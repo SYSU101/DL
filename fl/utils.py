@@ -44,3 +44,8 @@ def once(fn):
       fn(*args, **kwargs)
       tag = False
   return do_once
+
+def decay_learning_rate(optimizer, alpha, min_lr):
+  for param_group in optimizer.param_groups:
+    new_lr = param_group['lr']*alpha
+    param_group['lr'] = max(new_lr, min_lr)
