@@ -17,30 +17,32 @@ def clear_params(params):
   for param in params:
     param.data.fill_(0)
 
-def client_fn(rank, world_size, dataset):
+def client_fn(rank, world_size, name, dataset):
   device = torch.device('cuda:0')
   model = VGG11(num_classes = 10)
   model.to(device)
   criterion = CrossEntropyLoss()
   sgd = SGD(model.parameters(), lr = 8e-5, momentum = 0.4)
   model.train()
+  avg_loss = []
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters())
     recv_params(model.parameters())
     datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle = True)
+    running_loss = 0
     for j in range(LOCAL_EPOCH):
       for data, target in datas:
         output = model(data.to(device))
         loss = criterion(output.to(device), target.to(device))
+        running_loss += loss.item
         loss.backward()
         sgd.step()
-      decay_learning_rate(sgd, alpha = 0.8, min_lr = 1e-7)
+      decay_learning_rate(sgd, alpha = 0.8, min_lr = 1e-8)
+    avg_loss.append(running_loss/(j*len(datas)))
     send_params(model.parameters())
+  save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
-def server_fn(rank, world_size, testset):
-  global uploaded_bytes
-  global downloaded_bytes
-  global accuracies
+def server_fn(rank, world_size, name, testset):
   device = torch.device('cuda:0')
   model = VGG11(num_classes = 10)
   model.to(device)
@@ -65,20 +67,20 @@ def server_fn(rank, world_size, testset):
     accuracy = test_accuracy(model, testset, device)
     accuracies.append(accuracy)
     debug_print("正确率：%2.2lf%%"%(accuracy*100))
-
-def train(datasets, testset, is_iid = True):
-  name = 'FedAvg'.join('-iid' if is_iid else '-non-iid')
-  distributed.simulate(
-    server_fn = server_fn,
-    server_args = (testset,),
-    client_fn = client_fn,
-    gen_client_args = lambda rank: (datasets[rank-1],)
-  )
   save_lists('%s.acc.txt'%name,
     accuracies,
     list(range(0, GLOBAL_EPOCH)),
     uploaded_bytes,
     downloaded_bytes
+  )
+
+def train(datasets, testset, is_iid = True):
+  name = 'FedAvg'.join('-iid' if is_iid else '-non-iid')
+  distributed.simulate(
+    server_fn = server_fn,
+    server_args = (name, testset),
+    client_fn = client_fn,
+    gen_client_args = lambda rank: (name, datasets[rank-1])
   )
 
 if __name__ == '__main__':
