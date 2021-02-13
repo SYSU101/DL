@@ -34,7 +34,7 @@ def client_fn(rank, world_size, name, dataset):
       for data, target in datas:
         output = model(data.to(device))
         loss = criterion(output.to(device), target.to(device))
-        running_loss += loss.item
+        running_loss += loss.item()
         loss.backward()
         sgd.step()
       decay_learning_rate(sgd, alpha = 0.8, min_lr = 1e-8)
