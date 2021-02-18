@@ -73,10 +73,11 @@ def send_params(params, dst = 0):
 
 def recv_params_(params, alpha, src, device):
   buffer = recv_bytes(src)
+  size = len(buffer)
   for param in params:
     buffer, local_param = bytes2tensor(buffer, param.size(), param.dtype)
     param.data.add_(local_param.to(device), alpha = alpha)
-  return len(buffer)
+  return size
 
 def recv_params(params, alpha = 1.0, src = 0, device = torch.device('cuda:0')):
   size = recv_params_(params, alpha, src, device)
