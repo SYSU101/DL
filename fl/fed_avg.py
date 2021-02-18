@@ -75,7 +75,7 @@ def server_fn(rank, world_size, name, testset):
   )
 
 def train(datasets, testset, is_iid = True):
-  name = 'FedAvg'.join('-iid' if is_iid else '-non-iid')
+  name = 'FedAvg'+('-iid' if is_iid else '-non-iid')
   distributed.simulate(
     server_fn = server_fn,
     server_args = (name, testset),
