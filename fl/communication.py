@@ -59,28 +59,34 @@ def isend_bytes(buffer, dst):
   dist.send(size, dst)
   return dist.isend(buffer, dst)
 
-def send_params_(params, dst):
+def send_params_(params, dst, with_grad):
   buffer = bytearray()
   for param in params:
     tensor2bytes(param.data, buffer)
+    if with_grad:
+      tensor2bytes(param.grad, buffer)
   send_bytes(buffer, dst)
   return len(buffer)
 
-def send_params(params, dst = 0):
-  size = send_params_(params, dst)
+def send_params(params, dst = 0, with_grad = False):
+  size = send_params_(params, dst, with_grad)
   gc.collect()
   return size
 
-def recv_params_(params, alpha, src, device):
+def recv_params_(params, alpha, src, with_grad):
   buffer = recv_bytes(src)
   size = len(buffer)
   for param in params:
-    buffer, local_param = bytes2tensor(buffer, param.size(), param.dtype)
+    device = param.data.device
+    buffer, local_param = bytes2tensor(buffer, param.data.size(), param.data.dtype)
     param.data.add_(local_param.to(device), alpha = alpha)
+    if with_grad:
+      buffer, local_grad = bytes2tensor(buffer, param.grad.size(), param.grad.dtpye)
+      param.grad.copy_(local_grad)
   return size
 
-def recv_params(params, alpha = 1.0, src = 0, device = torch.device('cuda:0')):
-  size = recv_params_(params, alpha, src, device)
+def recv_params(params, alpha = 1.0, src = 0, with_grad = False):
+  size = recv_params_(params, alpha, src, with_grad)
   torch.cuda.empty_cache()
   gc.collect()
   return size
