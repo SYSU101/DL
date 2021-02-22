@@ -49,7 +49,7 @@ def send_bytes(buffer, dst):
 def recv_bytes(src):
   size = torch.zeros(1, dtype=torch.int64)
   dist.recv(size, src)
-  buffer = torch.zeros(size, dtype=torch.uint8)
+  buffer = torch.zeros(size.item(), dtype=torch.uint8)
   dist.recv(buffer, src)
   return bytes(buffer.tolist())
 
