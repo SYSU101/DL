@@ -70,7 +70,7 @@ def download_testsets(argv):
     return download(datasets.MNIST, is_gray = True, train = False)
 
 def unlimited_data_loader(dataset, **kwargs):
-  datas = iter(DataLoader(dataset, **kwargs)
+  datas = iter(DataLoader(dataset, **kwargs))
   while True:
     try:
       yield next(datas)

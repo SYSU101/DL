@@ -1,6 +1,7 @@
 import torch
+import torch.distributed as dist
 
-from .utils import grad_norm
+from ctypes import c_uint8
 from .vgg11 import VGG11
 from .sgd import FedSGD
 from .communication import recv_params, send_params, clear_params
@@ -8,8 +9,9 @@ from .data import unlimited_data_loader
 
 GLOBAL_EPOCH = 10000
 BATCH_SIZE = 4
+BITS_PER_GRAD = 4
 
-def quantize(cur_model, cmp_model, bits_per_grad):
+def quantize(cur_model, cmp_model, bits_per_grad = BITS_PER_GRAD):
   grad_diffs = []
   for cur_param, cmp_param in zip(cur_model.parameters(), cmp_model.parameters())
     device = cmp_param.grad.device
@@ -31,6 +33,12 @@ def quantize(cur_model, cmp_model, bits_per_grad):
     cur_param.grad.copy_(grad_diff.to(device))
   return (bits, r)
 
+def pack_bits(bits, width = BITS_PER_GRAD):
+  buffer = bytearray()
+  buf_byte = c_uint8(0)
+  for seg in bits:
+    
+
 def gen_cmp_model():
   cmp_model = VGG11(num_classes = 10)
   clear_params(cmp_model)
@@ -47,6 +55,13 @@ def copy_model(src_model, dst_model):
     dst_device = dst_param.device
     dst_param.data.copy_(src_param.data.to(device))
     dst_param.grad.copy_(src_param.grad.to(device))
+
+def calc_param_diff(cur_params, cmp_params, out, si):
+  out.fill_(0)
+  temp = torch.zeros(1)
+  for cur_param, cmp_param in zip(cur_params, cmp_params):
+    torch.norm(cur_param.data.sub(cmp_param.data), p = 2, out = temp)
+    out.add_(temp.pow(2))
 
 def client_fn(rank, world_size, dataset):
   device = torch.device('cuda:0')
@@ -66,6 +81,7 @@ def client_fn(rank, world_size, dataset):
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters())
     recv_params(model.parameters())
+    calc_param_diff(model.parameters(), cmp_model.parameters(), acc_upd, si)
     data, label = next(datas)
     output = model(data.to(device))
     loss = criterion(output, label.to(device))

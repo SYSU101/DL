@@ -2,6 +2,7 @@ import gc
 import torch
 import torch.cuda
 import torch.distributed as dist
+from .utils import debug_print
 from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
@@ -50,6 +51,7 @@ def recv_bytes(src):
   size = torch.zeros(1, dtype=torch.int64)
   dist.recv(size, src)
   buffer = torch.zeros(size, dtype=torch.uint8)
+  debug_print('finish')
   dist.recv(buffer, src)
   return bytes(buffer.tolist())
 

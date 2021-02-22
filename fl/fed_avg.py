@@ -14,7 +14,7 @@ GLOBAL_EPOCH = 1000
 BATCH_SIZE = 4
 
 def client_fn(rank, world_size, name, dataset):
-  device = torch.device('cuda:0')
+  device = torch.device('cpu')
   model = VGG11(num_classes = 10)
   model.to(device)
   criterion = CrossEntropyLoss()
@@ -39,7 +39,7 @@ def client_fn(rank, world_size, name, dataset):
   save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
-  device = torch.device('cuda:0')
+  device = torch.device('cpu')
   model = VGG11(num_classes = 10)
   model.to(device)
   uploaded_bytes = []
