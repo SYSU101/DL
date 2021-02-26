@@ -1,5 +1,6 @@
 #! /usr/bin/env python3.8
 
+import torch
 from torch.optim.optimizer import Optimizer, required
 
 '''
@@ -30,13 +31,14 @@ class FedSGD(Optimizer):
     defaults = dict(lr=lr, momentum=momentum, dampening=dampening, weight_decay=weight_decay, nesterov=nesterov)
     if nesterov and (momentum <= 0 or dampening != 0):
       raise ValueError("Nesterov momentum requires a momentum and zero dampening")
-    super(SGD, self).__init__(params, defaults)
+    super(FedSGD, self).__init__(params, defaults)
 
   def __setstate__(self, state):
-    super(SGD, self).__setstate__(state)
+    super(FedSGD, self).__setstate__(state)
     for group in self.param_groups:
       group.setdefault('nesterov', False)
 
+  @torch.no_grad()
   def step(self, closure=None):
     """Performs a single optimization step.
 
@@ -71,7 +73,5 @@ class FedSGD(Optimizer):
             d_p = d_p.add(buf, alpha=momentum)
           else:
             d_p = buf
-        d_p.mul_(-group['lr'])
         p.grad.copy_(d_p)
-
     return loss
