@@ -206,3 +206,22 @@ def server_fn(rank, world_size, name, testset):
     accuracies.append(accuracy)
     debug_print("正确率：%2.2lf%%"%(accuracy*100))
     lr = max(lr*0.997, min_lr)
+  save_lists('%s.acc.txt'%name,
+    accuracies,
+    list(range(0, GLOBAL_EPOCH)),
+    uploaded_bytes,
+    downloaded_bytes
+  )
+
+def train(datasets, testset, is_iid = True):
+  name = 'LAQ'+('-iid' if is_iid else '-non-iid')
+  distributed.simulate(
+    server_fn = server_fn,
+    server_args = (name, testset),
+    client_fn = client_fn,
+    gen_client_args = lambda rank: (name, datasets[rank-1])
+  )
+
+if __name__ == '__main__':
+  launch = flag.parse(sys.argv)
+  launch(train)
