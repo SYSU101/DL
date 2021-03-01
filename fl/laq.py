@@ -3,10 +3,11 @@ import torch.distributed as dist
 
 from ctypes import c_uint32, c_uint64
 from struct import pack, unpack
+from functools import reduce
 from .vgg11 import VGG11
 from .sgd import FedSGD
 from .communication import recv_params, send_params, recv_bytes, send_bytes
-from .utils import clear_params
+from .utils import clear_params, debug_print, test_accuracy
 from .data import unlimited_data_loader
 
 GLOBAL_EPOCH = 10000
@@ -91,7 +92,7 @@ def recv_segs(src, width):
   grid_size = grid_size.item()
   buffer = recv_bytes()
   segs = unpack_segs(buffer, width)
-  return (segs, grid_size)
+  return (segs, grid_size, 4+len(buffer))
 
 def recv_grads(model, width, src = 0):
   grid_size, segs = recv_segs(src)
@@ -104,6 +105,7 @@ def send_segs(segs, grid_size, width, dst = 0):
   dist.send(torch.tensor([grid_size]), dst)
   buffer = pack_segs(segs, width)
   send_bytes(buffer, dst)
+  return 4+len(buffer)
 
 def client_fn(rank, world_size, dataset):
   lr = 8e-5
@@ -140,6 +142,7 @@ def client_fn(rank, world_size, dataset):
       t += 1
     else:
       send_segs(segs, grid_size, BITS_PER_GRAD)
+      t = 0
       acc_upd.data.fill_(0)
     buf_error = error
     segs, grid_size = recv_segs()
@@ -151,4 +154,55 @@ def client_fn(rank, world_size, dataset):
       param.grad.copy_(ref_grad.to(gpu))
       param.data.add_(param.grad, alpha = lr)
       acc_upd.add(ref_grad.norm(p = 2).pow(2), alpha = si)
+    lr = max(lr*0.997, min_lr)
+
+def server_fn(rank, world_size, name, testset):
+  uploaded_bytes = []
+  downloaded_bytes = []
+  accuracies = []
+  uploaded = int(0)
+  downloaded = int(0)
+
+  gpu = torch.device('cuda:0')
+  cpu = torch.device('cpu')
+  model = VGG11(num_classes = 10)
+  model.to(gpu)
+  lr = 0.1
+  min_lr = 1e-8
+
+  for i in range(1, world_size):
+    downloaded += send_params(model.parameters(), dst = i)
+  t = [0 for i in range(1, world_size)]
+  ref_grads = [param.grad.clone().detach().to(cpu) for param in model.parameters()]
+  segs = [None for _ in range(1, world_size)]
+  grid_sizes = [0 for _ in range(1, world_size)]
+  
+  for i in range(GLOBAL_EPOCH):
+    debug_print("训练中...进度：%2.4lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
+    upload_count = 0
+    for j in range(world_size-1):
+      segs[j], grid_sizes[j], bytes_count = recv_segs(src = j+1, width = BITS_PER_GRAD)
+      uploaded += bytes_count
+      if len(segs[j]) > 0:
+        upload_count += 1
+        t[j] = 0
+      else:
+        t[j] += 1
+    t_mean = reduce(lambda acc, cur: acc+cur/(world_size-1), t)
+    for j in range(world_size-1):
+      r = BITS_PER_GRAD*grid_sizes[j]
+      iseg = iter(segs[j])
+      for param in model.parameters():
+        param.grad.to(cpu).apply_(lambda d: (next(iseg)*grid_sizes[j]-r)/upload_count+d)
+    agg_segs, grid_size, _, _ = quantize(model, ref_grads, BITS_PER_GRAD)
+    for param, ref_grad in zip(model.parameters(), ref_grads):
+      ref_grad.copy_(param.grad)
+      param.data.add_(param.gard, alpha=lr)
+    t_mean = torch.tensor(t_mean)
+    for j in range(1, world_size):
+      downloaded += send_segs(agg_segs, grid_size, BITS_PER_GRAD, dst=j)
+      dist.send(t_mean, dst = j)
+    accuracy = test_accuracy(model, testset, gpu)
+    accuracies.append(accuracy)
+    debug_print("正确率：%2.2lf%%"%(accuracy*100))
     lr = max(lr*0.997, min_lr)
