@@ -1,6 +1,7 @@
 #! /usr/bin/env python3.8
 from . import config
 from torch import argmax
+from torch.utils.data import DataLoader
 from random import Random
 from math import ceil
 from torchvision import datasets, transforms

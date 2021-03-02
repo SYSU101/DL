@@ -53,4 +53,5 @@ def decay_learning_rate(optimizer, alpha, min_lr):
 def clear_params(params):
   for param in params:
     param.data.fill_(0)
-    param.grad.fill_(0)
+    if param.data.grad != None:
+      param.grad.fill_(0)
