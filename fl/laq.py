@@ -7,10 +7,10 @@ from struct import pack, unpack
 from functools import reduce
 from torch.nn import CrossEntropyLoss
 from . import flag, distributed
-from .vgg11 import VGG11
+from .mobilenet import mobilenet_v2
 from .sgd import FedSGD
 from .communication import recv_params, send_params, recv_bytes, send_bytes
-from .utils import clear_params, debug_print, test_accuracy
+from .utils import clear_params, debug_print, test_accuracy, get_params, get_grads
 from .data import unlimited_data_loader
 
 GLOBAL_EPOCH = 10000
@@ -23,9 +23,9 @@ def quantize(model, ref_grads, bits_per_grad):
   cpu = torch.device('cpu')
   gpu = torch.device('cuda:0')
   error = 0
-  for param, ref_grad in zip(model.parameters(), ref_grads):
-    cur_grad = param.grad.to(cpu)
-    grad_diffs.append(cur_grad.sub(ref_grad))
+  for grad, ref_grad in zip(get_grads(model), ref_grads):
+    grad = grad.to(cpu)
+    grad_diffs.append(grad.sub(ref_grad))
   r = 0
   temp = torch.zeros(1)
   for grad_diff in grad_diffs:
@@ -37,11 +37,11 @@ def quantize(model, ref_grads, bits_per_grad):
   for grad_diff in grad_diffs:
     grad_diff.apply_(lambda d: ((d+r)/grid_size+0.5)//1)
     grad_diff.apply_(lambda d: (segs.append(c_uint32(int(d))), d*grid_size-r)[-1])
-    total_diff += grad_diff.norm(p = 2).pow(2).item()
-  for cur_param, grad_diff, ref_grads in zip(model.parameters(), grad_diffs, ref_grads):
+    total_diff += grad_diff.norm(p = 2).pow_(2).item()
+  for cur_grad, grad_diff, ref_grads in zip(get_grads(model), grad_diffs, ref_grads):
     ref_grad.add_(grad_diff, alpha = 1)
-    error += ref_grad.sub(cur_param.grad).norm(p = 2).pow(2).item()
-    cur_param.grad.copy_(ref_grad.to(gpu))
+    error += ref_grad.sub(cur_param.grad).norm(p = 2).pow_(2).item()
+    cur_grad.copy_(ref_grad.to(gpu))
   return (segs, grid_size, error, total_diff)
 
 def pack_segs(segs, width):
@@ -102,8 +102,8 @@ def recv_grads(model, width, src = 0):
   grid_size, segs = recv_segs(src)
   segs = iter(segs)
   r = (grid_size*(1<<width))/2
-  for param in model.parameters():
-    param.grad.apply_(lambda g: g+next(segs)*grid_size-r)
+  for grad in get_grads(model):
+    grad.apply_(lambda g: g+next(segs)*grid_size-r)
 
 def send_segs(segs, grid_size, width, dst = 0):
   dist.send(torch.tensor([grid_size]), dst)
@@ -112,10 +112,10 @@ def send_segs(segs, grid_size, width, dst = 0):
   return 4+len(buffer)
 
 def client_fn(rank, world_size, name, dataset):
-  lr = 8e-5
+  lr = 1e-3
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
-  model = VGG11(num_classes = 10)
+  model = mobilenet_v2(num_classes = 10)
   clear_params(model.parameters())
   recv_params(model.parameters())
   model.to(gpu)
@@ -129,9 +129,9 @@ def client_fn(rank, world_size, name, dataset):
   acc_upd = torch.zeros(1)
   t = 0
   t_mean = torch.zeros(1)
-  ref_grads = [param.clone().detach().to(cpu).fill_(0) for param in model.parameters()]
+  ref_grads = [param.clone().detach().to(cpu).fill_(0) for param in get_params(model)]
   buf_error = 0
-  min_lr = 1e-8
+  min_lr = 1e-5
   
   for i in range(GLOBAL_EPOCH):
     data, label = next(datas)
@@ -155,12 +155,17 @@ def client_fn(rank, world_size, name, dataset):
     dist.recv(t_mean)
     r = BITS_PER_GRAD*segs/2
     segs = iter(segs)
-    for param, ref_grad in zip(model.parameters(), ref_grads):
+    iter_ref_grads = iter(ref_grads)
+    for param, ref_grad in zip(model.parameters(), iter_ref_grads):
       ref_grad.apply_(lambda g: g+next(segs)*grid_size-r)
       param.grad.copy_(ref_grad.to(gpu))
       param.data.add_(param.grad, alpha = lr)
-      acc_upd.add(ref_grad.norm(p = 2).pow(2), alpha = si)
-    lr = max(lr*0.997, min_lr)
+      acc_upd.add(ref_grad.norm(p = 2).div_(lr).pow_(2), alpha = si)
+    for buffer, ref_grad in zip(model.buffers(), iter_ref_grads):
+      ref_grad.apply_(lambda g: g+next(segs)*grid_size-r)
+      buffer.copy_(ref_grad.to(gpu))
+      acc_upd.add(ref_grad.norm(p = 2).div_(lr).pow_(2), alpha = si)
+    lr = max(lr*0.9979, min_lr)
 
 def server_fn(rank, world_size, name, testset):
   uploaded_bytes = []
@@ -171,7 +176,7 @@ def server_fn(rank, world_size, name, testset):
 
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
-  model = VGG11(num_classes = 10)
+  model = mobilenet_v2(num_classes = 10)
   model.to(gpu)
   lr = 0.1
   min_lr = 1e-8
@@ -179,7 +184,7 @@ def server_fn(rank, world_size, name, testset):
   for i in range(1, world_size):
     downloaded += send_params(model.parameters(), dst = i)
   t = [0 for i in range(1, world_size)]
-  ref_grads = [param.clone().detach().to(cpu).fill_(0) for param in model.parameters()]
+  ref_grads = [param.clone().detach().to(cpu).fill_(0) for param in get_params(model)]
   segs = [None for _ in range(1, world_size)]
   grid_sizes = [0 for _ in range(1, world_size)]
   
@@ -198,8 +203,8 @@ def server_fn(rank, world_size, name, testset):
     for j in range(world_size-1):
       r = BITS_PER_GRAD*grid_sizes[j]
       iseg = iter(segs[j])
-      for param in model.parameters():
-        param.grad.to(cpu).apply_(lambda d: (next(iseg)*grid_sizes[j]-r)/upload_count+d)
+      for grad in get_grads(model):
+        grad.to(cpu).apply_(lambda d: (next(iseg)*grid_sizes[j]-r)/upload_count+d)
     agg_segs, grid_size, _, _ = quantize(model, ref_grads, BITS_PER_GRAD)
     t_mean = torch.tensor(t_mean)
     for j in range(1, world_size):
