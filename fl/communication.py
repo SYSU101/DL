@@ -10,21 +10,23 @@ from string import Template
 fmt_code = {
   torch.float32: Template('>${num}f'),
   torch.float64: Template('>${num}d'),
+  torch.int64: Template('>${num}q'),
 }
 
 byte_size = {
   torch.float32: 4,
   torch.float64: 8,
+  torch.int64: 8,
 }
 
 def get_fmt_code(dtype):
   if not dtype in fmt_code:
-    raise RuntimeError('dtype %s is not supported'%tensor.dtype)
+    raise RuntimeError('dtype %s is not supported'%dtype)
   return fmt_code.get(dtype)
 
 def get_byte_size(dtype):
   if not dtype in byte_size:
-    raise RuntimeError('dtype %s is not supported'%tensor.dtype)
+    raise RuntimeError('dtype %s is not supported'%dtype)
   return byte_size.get(dtype)
 
 def tensor2bytes(tensor, buffer):
@@ -87,7 +89,7 @@ def recv_params_(params, alpha, src, with_grad, model_buffer):
     if with_grad:
       buffer, local_grad = bytes2tensor(buffer, param.grad.size(), param.grad.dtpye)
       param.grad.copy_(local_grad)
-  if with_buffer != None:
+  if model_buffer != None:
     for buf in model_buffer:
       device = buf.data.device
       buffer, recv_buf = bytes2tensor(buffer, buf.data.size(), buf.data.dtype)
