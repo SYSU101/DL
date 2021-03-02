@@ -8,6 +8,9 @@ for param in "$@"; do
   fi
 done
 
-echo "nohup python3"$2" -m fl."$1""$extra_param" &"
+command="nohup python3"$2" -m fl."$1""$extra_param
 
-nohup python3$2 -m fl.$1$extra_param &
+echo $command
+
+rm -rf nohup.out
+$command &
