@@ -4,10 +4,10 @@ import torch
 from torch.optim import SGD
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader
+from torchvision.models import mobilenet_v2
 from . import flag, config, distributed
 from .communication import send_params, recv_params
 from .utils import test_accuracy, debug_print, save_lists, decay_learning_rate, clear_params
-from .vgg11 import VGG11
 
 LOCAL_EPOCH = 10
 GLOBAL_EPOCH = 1000
@@ -15,15 +15,15 @@ BATCH_SIZE = 4
 
 def client_fn(rank, world_size, name, dataset):
   device = torch.device('cuda:0')
-  model = VGG11(num_classes = 10)
+  model = mobilenet_v2(num_classes = 10)
   model.to(device)
   criterion = CrossEntropyLoss()
   sgd = SGD(model.parameters(), lr = 8e-5, momentum = 0.4)
   model.train()
   avg_loss = []
   for i in range(GLOBAL_EPOCH):
-    clear_params(model.parameters())
-    recv_params(model.parameters())
+    clear_params(model.parameters(), model.buffers())
+    recv_params(model.parameters(), model_buffer = model.buffers())
     datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle = True)
     running_loss = 0
     for j in range(LOCAL_EPOCH):
@@ -35,7 +35,7 @@ def client_fn(rank, world_size, name, dataset):
         sgd.step()
       decay_learning_rate(sgd, alpha = 0.8, min_lr = 1e-8)
     avg_loss.append(running_loss/(j*len(datas)))
-    send_params(model.parameters())
+    send_params(model.parameters(), model_buffer = model.buffers())
   save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
@@ -51,12 +51,13 @@ def server_fn(rank, world_size, name, testset):
     debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
     for j in range(1, world_size):
       downloaded += send_params(params = model.parameters(), dst = j)
-    clear_params(model.parameters())
+    clear_params(model.parameters(), model.buffers())
     for j in range(1, world_size):
       uploaded += recv_params(
         params = model.parameters(),
         alpha = config.data_distribution[j-1],
         src = j
+        model_buffer = model.buffers()
       )
     uploaded_bytes.append(uploaded)
     downloaded_bytes.append(downloaded)
