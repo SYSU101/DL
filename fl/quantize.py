@@ -12,6 +12,7 @@ class QuantizedBuffer(object):
     self.result = []
     self.error = 0
     self.diffs_norm = 0
+    self.recv_proc = None
 
   def update(self, datas):
     self.error = 0
@@ -50,11 +51,16 @@ class QuantizedBuffer(object):
     result = iter(self.result)
     radius = self.data_width*self.scale/2
     for data in datas:
-      data.to(torch.device('cpu')).apply_(lambda d: d+next(result)*self.scale-radius)
+      data.to(torch.device('cpu')).apply_(lambda d: d+(next(result)*self.scale-radius)*alpha)
 
   def send_to(self, dst):
     return send_segs(self.result, self.scale, self.data_width, dst)
 
   def recv_from(self, src):
-    self.result, self.scale, recv_len = recv_segs(src, self.data_width)
+    self.result, self.scale, recv_len, self.recv_proc = recv_segs(src, self.data_width)
     return recv_len
+  
+  def wait_recv(self):
+    if self.recv_proc != None:
+      self.recv_proc.join()
+      self.recv_proc = None

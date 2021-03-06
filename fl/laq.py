@@ -4,7 +4,6 @@ import torch.distributed as dist
 
 from functools import reduce
 from torch.nn import CrossEntropyLoss
-from threading import Thread
 from . import flag, distributed
 from .mobilenet import mobilenet_v2
 from .sgd import FedSGD
@@ -100,8 +99,8 @@ def server_fn(rank, world_size, name, testset):
 
   buffer_num = reduce(lambda count, _: count+1, model.buffers(), 0)
   param_num = reduce(lambda count, _: count+1, model.parameters(), 0)
-  qb_buffers = QuantizedBuffer(buffer_num, TARGET_WIDTH, gpu)
-  qb_grads = QuantizedBuffer(param_num, TARGET_WIDTH, gpu)
+  qb_buffers = [QuantizedBuffer(buffer_num, TARGET_WIDTH, gpu) for _ in range(world_size)]
+  qb_grads = [QuantizedBuffer(param_num, TARGET_WIDTH, gpu) for _ in range(world_size)]
   t = [0 for i in range(1, world_size)]
 
   uploaded_bytes = []
@@ -138,24 +137,27 @@ def server_fn(rank, world_size, name, testset):
     alpha = 1/upload_count
     for j in range(1, world_size):
       if t[j-1] == 0:
-        uploaded += qb_grads.recv_from(j)
-        uploaded += qb_buffers.recv_from(j)
-        now = time()
-        debug_print("来自客户机%d的数据接收完成，用时%.2lf秒"%(j, now-last_check_point))
-        last_check_point = now
-        qb_grads.step(map(lambda param: param.grad, model.parameters()), alpha)
-        qb_buffers.step(model.buffers(), alpha)
-        now = time()
-        debug_print("来自客户机%d的数据计算完成，用时%.2lf秒"%(j, now-last_check_point))
-        last_check_point = now
-    qb_grads.update(map(lambda param: param.grad, model.parameters()))
-    qb_buffers.update(model.buffers())
+        uploaded += qb_grads[j].recv_from(j)
+        uploaded += qb_buffers[j].recv_from(j)
+    now = time()
+    debug_print("来自客户端的数据接收完成，用时%.2lf秒"%(now-last_check_point))
+    last_check_point = now
+    for j in range(1, world_size):
+      qb_grads[j].wait_recv()
+      qb_grads[j].step(map(lambda param: param.grad, model.parameters()), alpha)
+      qb_buffers[j].wait_recv()
+      qb_buffers[j].step(model.buffers(), alpha)
+      now = time()
+      debug_print("来自客户端%d的数据解码完成，用时%.2lf秒"%(j, now-last_check_point))
+      last_check_point = now
+    qb_grads[0].update(map(lambda param: param.grad, model.parameters()))
+    qb_buffers[0].update(model.buffers())
     now = time()
     debug_print("重新量化完成，用时%.2lf秒"%(j, now-last_check_point))
     last_check_point = now
     for j in range(1, world_size):
-      downloaded += qb_grads.send_to(j)
-      downloaded += qb_buffers.send_to(j)
+      downloaded += qb_grads[0].send_to(j)
+      downloaded += qb_buffers[0].send_to(j)
       dist.send(t_mean, dst = j)
       downloaded += 8
       now = time()

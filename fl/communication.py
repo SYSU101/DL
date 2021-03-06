@@ -7,6 +7,7 @@ from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
 from ctypes import c_uint64
+from multiprocessing import Process
 
 fmt_code = {
   torch.float32: Template('>${num}f'),
@@ -120,8 +121,8 @@ def pack_segs(segs, width):
     buffer.extend(pack('>Q', c_uint64(rest_byte).value)[:1])
   return buffer
 
-def unpack_segs(buffer, width):
-  segs = []
+def unpack_segs(segs, buffer, width):
+  segs.clear()
   last_rest = 0
   while len(buffer)*8 >= width+last_rest:
     cur_rest = width
@@ -153,5 +154,7 @@ def recv_segs(src, width):
   dist.recv(scale, src)
   scale = scale.item()
   buffer = recv_bytes(src)
-  segs = unpack_segs(buffer, width)
-  return (segs, scale, 4+len(buffer))
+  segs = []
+  p = Proicess(target = unpack_segs, args = (buffer, width))
+  p.start()
+  return (segs, scale, 4+len(buffer), p)
