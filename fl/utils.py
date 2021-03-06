@@ -59,16 +59,3 @@ def clear_params(params, buffer = None):
   if buffer != None:
     for buf in buffer:
       buf.data.fill_(0)
-
-def get_params(model):
-  params = model.parameters()
-  if model.buffers() != None:
-    params = chain(params, model.buffers())
-  return params
-
-def get_grads(model):
-  params = model.parameters()
-  params = map(lambda p: p.grad, params)
-  if model.buffers() != None:
-    params = chain(params, model.buffers())
-  return params

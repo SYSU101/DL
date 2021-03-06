@@ -6,6 +6,7 @@ from .utils import debug_print
 from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
+from ctypes import c_uint32, c_uint64
 
 fmt_code = {
   torch.float32: Template('>${num}f'),
@@ -101,3 +102,56 @@ def recv_params(params, alpha = 1.0, src = 0, with_grad = False, model_buffer = 
   torch.cuda.empty_cache()
   gc.collect()
   return size
+
+def pack_segs(segs, width):
+  buffer = bytearray()
+  rest_len = 0
+  rest_byte = 0
+  byte_buffer = 0
+  for seg in segs:
+    seg = seg.value
+    pack_len = rest_len+width
+    seg = ((seg << (64-pack_len)) | rest_byte)
+    byte_num = pack_len//8
+    rest_len = pack_len%8
+    buffer.extend(pack('>Q', c_uint64(seg).value)[:byte_num])
+    rest_byte = (seg << (byte_num*8))
+  if rest_len > 0:
+    buffer.extend(pack('>Q', c_uint64(rest_byte).value)[:1])
+  return buffer
+
+def unpack_segs(buffer, width):
+  segs = []
+  last_rest = 0
+  while len(buffer)*8 >= width+last_rest:
+    cur_rest = width
+    seg = 0
+    while cur_rest > 0:
+      msb = 8-last_rest
+      lsb = max(8-last_rest-cur_rest, 0)
+      byte = unpack('>B', buffer[:1])[0]
+      byte &= ((1 << msb)-1)
+      byte >>= lsb
+      seg = (seg << min(8, cur_rest)) | byte
+      cur_rest -= (8-last_rest)
+      if lsb == 0:
+        last_rest = 0
+        buffer = buffer[1:]
+      else:
+        last_rest = 8-lsb
+    segs.append(seg)
+  return segs
+
+def send_segs(segs, scale, width, dst = 0):
+  dist.send(torch.tensor([scale]), dst)
+  buffer = pack_segs(segs, width)
+  send_bytes(buffer, dst)
+  return 4+len(buffer)
+
+def recv_segs(src, width):
+  scale = torch.zeros(1)
+  dist.recv(scale, src)
+  scale = scale.item()
+  buffer = recv_bytes()
+  segs = unpack_segs(buffer, width)
+  return (segs, scale, 4+len(buffer))
