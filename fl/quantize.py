@@ -1,6 +1,7 @@
 import torch
 from ctypes import c_uint32
-from .communication import send_segs, recv_segs
+from .communication import send_segs, recv_segs, EOP
+from .utils import debug_print
 
 class QuantizedBuffer(object):
   def __init__(self, data_len, data_width, device):
@@ -13,6 +14,7 @@ class QuantizedBuffer(object):
     self.error = 0
     self.diffs_norm = 0
     self.recv_proc = None
+    self.recv_conn = None
 
   def update(self, datas):
     self.error = 0
@@ -37,7 +39,7 @@ class QuantizedBuffer(object):
       result = ((diff+radius)/self.scale+0.5)//1
       self.result.append(c_uint32(int(result)))
       result = result*self.scale-radius
-      self.error += abs(result-diff)
+      self.error += (result-diff)**2
       return result
     for diff in diffs:
       diff.to(torch.device('cpu')).apply_(quantize_diff)
@@ -57,10 +59,15 @@ class QuantizedBuffer(object):
     return send_segs(self.result, self.scale, self.data_width, dst)
 
   def recv_from(self, src):
-    self.result, self.scale, recv_len, self.recv_proc = recv_segs(src, self.data_width)
+    self.recv_conn, self.scale, recv_len, self.recv_proc = recv_segs(src, self.data_width)
     return recv_len
   
   def wait_recv(self):
     if self.recv_proc != None:
+      self.result.clear()
+      for seg in iter(self.recv_conn.recv, EOP):
+        self.result.append(seg)
+      self.recv_conn.close()
       self.recv_proc.join()
       self.recv_proc = None
+      self.recv_conn = None

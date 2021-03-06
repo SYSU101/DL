@@ -40,7 +40,7 @@ def client_fn(rank, world_size, name, dataset):
   si = 0.1
   acc_upd = torch.zeros(1)
   t = 0
-  t_mean = torch.zeros(1)
+  t_m = 10
   buf_error = 0
   buffer_num = reduce(lambda count, _: count+1, model.buffers(), 0)
   param_num = reduce(lambda count, _: count+1, model.parameters(), 0)
@@ -64,8 +64,8 @@ def client_fn(rank, world_size, name, dataset):
     qb_grads.update(map(lambda param: param.grad, model.parameters()))
     m = world_size-1
     grad_diff = qb_grads.diffs_norm
-    error = qb_grads.error+qb_buffers.error
-    if grad_diff <= acc_upd.item()/(lr**2*m**2)+3*(error+buf_error) and t < t_mean.item():
+    error = qb_grads.error
+    if grad_diff <= acc_upd.item()/(lr**2*m**2)+3*(error+buf_error) and t < t_m:
       dist.send(torch.tensor(False), dst = 0)
       t += 1
     else:
@@ -77,16 +77,16 @@ def client_fn(rank, world_size, name, dataset):
     buf_error = error
     qb_grads.recv_from(0)
     qb_buffers.recv_from(0)
-    dist.recv(t_mean)
+    qb_grads.wait_recv()
+    qb_buffers.wait_recv()
     qb_grads.step(map(lambda param: param.grad, model.parameters()))
     qb_buffers.step(model.buffers())
     temp = torch.zeros(1)
-    for param in params:
+    for param in model.parameters():
       param.grad.mul_(lr)
-      torch.norm(param.grad, p = 2, out = temp)
+      torch.norm(param.grad.to(cpu), p = 2, out = temp)
       acc_upd.add_(temp.pow_(2), alpha = si)
       param.data.add_(param.grad)
-    acc_upd.add(qb_buffers.diffs_norm, alpha = si)
     lr = max(lr*0.9979, min_lr)
 
 def server_fn(rank, world_size, name, testset):
@@ -116,8 +116,6 @@ def server_fn(rank, world_size, name, testset):
     downloaded += send_params(model.parameters(), dst = i)
   
   for i in range(GLOBAL_EPOCH):
-    debug_print("循环%d："%i)
-    last_check_point = time()
     if (i+1)%LOCAL_EPOCH == 0:
       debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
     upload_count = 0
@@ -129,53 +127,33 @@ def server_fn(rank, world_size, name, testset):
         t[j-1] = 0
       else:
         t[j-1] += 1
-    now = time()
-    debug_print("上传客户端数量确认完成，用时%.2lf秒"%(now-last_check_point))
-    last_check_point = now
-    t_mean = reduce(lambda acc, cur: acc+cur/(world_size-1), t, 0)
-    t_mean = torch.tensor(t_mean)
-    alpha = 1/upload_count
+    if upload_count != 0:
+      alpha = 1/upload_count
+    else:
+      alpha = 0
     for j in range(1, world_size):
       if t[j-1] == 0:
         uploaded += qb_grads[j].recv_from(j)
         uploaded += qb_buffers[j].recv_from(j)
-    now = time()
-    debug_print("来自客户端的数据接收完成，用时%.2lf秒"%(now-last_check_point))
-    last_check_point = now
     for j in range(1, world_size):
-      qb_grads[j].wait_recv()
-      qb_grads[j].step(map(lambda param: param.grad, model.parameters()), alpha)
-      qb_buffers[j].wait_recv()
-      qb_buffers[j].step(model.buffers(), alpha)
-      now = time()
-      debug_print("来自客户端%d的数据解码完成，用时%.2lf秒"%(j, now-last_check_point))
-      last_check_point = now
+      if t[j-1] == 0:
+        qb_grads[j].wait_recv()
+        qb_grads[j].step(map(lambda param: param.grad, model.parameters()), alpha)
+        qb_buffers[j].wait_recv()
+        qb_buffers[j].step(model.buffers(), alpha)
     qb_grads[0].update(map(lambda param: param.grad, model.parameters()))
     qb_buffers[0].update(model.buffers())
-    now = time()
-    debug_print("重新量化完成，用时%.2lf秒"%(j, now-last_check_point))
-    last_check_point = now
     for j in range(1, world_size):
       downloaded += qb_grads[0].send_to(j)
       downloaded += qb_buffers[0].send_to(j)
-      dist.send(t_mean, dst = j)
       downloaded += 8
-      now = time()
-      debug_print("数据发送到客户机%d完成，用时%.2lf秒"%(j, now-last_check_point))
-      last_check_point = now
     for param in model.parameters():
-      param.add_(param.grad, alpha = lr)
-    now = time()
-    debug_print("梯度应用完成，用时%.2lf秒"%(now-last_check_point))
-    last_check_point = now
+      param.data.add_(param.grad, alpha = lr)
     if (i+1)%LOCAL_EPOCH == 0:
       downloaded_bytes.append(downloaded)
       uploaded_bytes.append(uploaded)
       accuracy = test_accuracy(model, testset, gpu)
       accuracies.append(accuracy)
-      now = time()
-      debug_print("正确率计算完成，用时%.2lf秒"%(now-last_check_point))
-      last_check_point = now
       debug_print("正确率：%2.2lf%%"%(accuracy*100))
     lr = max(lr*0.997, min_lr)
   save_lists('%s.acc.txt'%name,

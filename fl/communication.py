@@ -2,12 +2,11 @@ import gc
 import torch
 import torch.cuda
 import torch.distributed as dist
-from .utils import debug_print
 from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
 from ctypes import c_uint64
-from multiprocessing import Process
+from multiprocessing import Process, Pipe
 
 fmt_code = {
   torch.float32: Template('>${num}f'),
@@ -20,6 +19,8 @@ byte_size = {
   torch.float64: 8,
   torch.int64: 8,
 }
+
+EOP = '__END_OF_PIPE__'
 
 def get_fmt_code(dtype):
   if not dtype in fmt_code:
@@ -116,13 +117,12 @@ def pack_segs(segs, width):
     byte_num = pack_len//8
     rest_len = pack_len%8
     buffer.extend(pack('>Q', c_uint64(seg).value)[:byte_num])
-    rest_byte = (seg << (byte_num*8))
+    rest_byte = c_uint64(seg << (byte_num*8)).value
   if rest_len > 0:
     buffer.extend(pack('>Q', c_uint64(rest_byte).value)[:1])
   return buffer
 
 def unpack_segs(segs, buffer, width):
-  segs.clear()
   last_rest = 0
   while len(buffer)*8 >= width+last_rest:
     cur_rest = width
@@ -140,12 +140,13 @@ def unpack_segs(segs, buffer, width):
         buffer = buffer[1:]
       else:
         last_rest = 8-lsb
-    segs.append(seg)
-  return segs
+    segs.send(seg)
+  segs.send(EOP)
+  segs.close()
 
 def send_segs(segs, scale, width, dst = 0):
-  dist.send(torch.tensor([scale]), dst)
   buffer = pack_segs(segs, width)
+  dist.send(torch.tensor([scale]), dst)
   send_bytes(buffer, dst)
   return 4+len(buffer)
 
@@ -154,7 +155,7 @@ def recv_segs(src, width):
   dist.recv(scale, src)
   scale = scale.item()
   buffer = recv_bytes(src)
-  segs = []
-  p = Proicess(target = unpack_segs, args = (buffer, width))
+  recv_conn, send_conn = Pipe(duplex = False)
+  p = Process(target = unpack_segs, args = (send_conn, buffer, width))
   p.start()
-  return (segs, scale, 4+len(buffer), p)
+  return (recv_conn, scale, 4+len(buffer), p)
