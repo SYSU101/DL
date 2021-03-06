@@ -6,7 +6,7 @@ from .utils import debug_print
 from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
-from ctypes import c_uint32, c_uint64
+from ctypes import c_uint64
 
 fmt_code = {
   torch.float32: Template('>${num}f'),
@@ -152,6 +152,6 @@ def recv_segs(src, width):
   scale = torch.zeros(1)
   dist.recv(scale, src)
   scale = scale.item()
-  buffer = recv_bytes()
+  buffer = recv_bytes(src)
   segs = unpack_segs(buffer, width)
   return (segs, scale, 4+len(buffer))
