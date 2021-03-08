@@ -32,26 +32,25 @@ class QuantizedBuffer(object):
     for diff in diffs:
       torch.norm(input = diff, p = float('inf'), out = temp)
       radius = max(temp.item(), radius)
-    self.scale = radius*2/self.data_width
-    def quantize_diff(diff):
-      result = ((diff+radius)/self.scale+0.5)//1
-      self.result.append(c_uint32(int(result)))
-      result = result*self.scale-radius
-      self.error += (result-diff)**2
-      return result
-    for diff in diffs:
-      diff.to(torch.device('cpu')).apply_(quantize_diff)
-    temp.fill_(0)
+    self.scale = radius*2/((1<<self.data_width)-1)
     self.diffs_norm = 0
     for diff in diffs:
+      result_tensor = diff.add(radius).div_(self.scale).add_(0.5).int()
+      self.result.extend(result_tensor.flatten().tolist())
+      qd = result_tensor.float().mul_(self.scale).sub_(radius)
+      self.error += torch.norm(diff.sub_(qd), p = 2).pow_(2).item()
+      diff.copy_(qd)
       torch.norm(diff, p = 2, out = temp)
       self.diffs_norm += temp.pow_(2).item()
 
   def step(self):
-    result = map(lambda r: r.value, iter(self.result))
-    radius = self.data_width*self.scale/2
+    result = self.result
+    radius = ((1<<self.data_width)-1)*self.scale/2
     for buffer in self.buffers:
-      buffer.to(torch.device('cpu')).apply_(lambda d: d+next(result)*self.scale-radius)
+      num_buffer = buffer.size().numel()
+      diff, result = result[:num_buffer], result[num_buffer:]
+      diff = torch.tensor(diff, device = self.device).float().resize_(buffer.size()).mul_(self.scale)
+      buffer.add_(diff).sub_(radius)
 
   def send_to(self, dst):
     if self.result_buffer == None:
