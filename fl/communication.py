@@ -96,7 +96,6 @@ def pack_segs(segs, width):
   rest_byte = 0
   byte_buffer = 0
   for seg in segs:
-    seg = seg.value
     pack_len = rest_len+width
     seg = ((seg << (64-pack_len)) | rest_byte)
     byte_num = pack_len//8

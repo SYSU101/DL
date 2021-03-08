@@ -99,6 +99,7 @@ def server_fn(rank, world_size, name, testset):
   marker = get_marker()
 
   model.to(gpu)
+  model.eval()
   for i in range(1, world_size):
     downloaded += send_model(model, dst = i)
   
