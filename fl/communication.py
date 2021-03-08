@@ -2,11 +2,11 @@ import gc
 import torch
 import torch.cuda
 import torch.distributed as dist
-from .utils import debug_print
 from torch import Tensor, flatten, torch
 from struct import pack, unpack
 from string import Template
-from ctypes import c_uint32, c_uint64
+from ctypes import c_uint64
+from multiprocessing import Process, Pipe
 
 fmt_code = {
   torch.float32: Template('>${num}f'),
@@ -19,6 +19,8 @@ byte_size = {
   torch.float64: 8,
   torch.int64: 8,
 }
+
+EOP = '__END_OF_PIPE__'
 
 def get_fmt_code(dtype):
   if not dtype in fmt_code:
@@ -57,52 +59,37 @@ def recv_bytes(src):
   dist.recv(buffer, src)
   return bytes(buffer.tolist())
 
-def isend_bytes(buffer, dst):
-  buffer = torch.tensor(buffer, dtype=torch.uint8)
-  size = torch.tensor([buffer.size().numel()], dtype=torch.int64)
-  dist.send(size, dst)
-  return dist.isend(buffer, dst)
-
-def send_params_(params, dst, with_grad, model_buffer):
+def send_tensors(tensors, dst = 0):
   buffer = bytearray()
-  for param in params:
+  for tensor in tensors:
     tensor2bytes(param.data, buffer)
-    if with_grad:
-      tensor2bytes(param.grad, buffer)
-  if model_buffer != None:
-    for buf in model_buffer:
-      tensor2bytes(buf.data, buffer)
   send_bytes(buffer, dst)
   return len(buffer)
 
-def send_params(params, dst = 0, with_grad = False, model_buffer = None):
-  size = send_params_(params, dst, with_grad, model_buffer)
-  gc.collect()
-  return size
-
-def recv_params_(params, alpha, src, with_grad, model_buffer):
+def recv_tensors(tensors, src = 0, alpha = 1.0):
   buffer = recv_bytes(src)
   size = len(buffer)
-  for param in params:
-    device = param.data.device
-    buffer, local_param = bytes2tensor(buffer, param.data.size(), param.data.dtype)
-    param.data.add_(local_param.to(device), alpha = alpha)
-    if with_grad:
-      buffer, local_grad = bytes2tensor(buffer, param.grad.size(), param.grad.dtpye)
-      param.grad.copy_(local_grad)
-  if model_buffer != None:
-    for buf in model_buffer:
-      device = buf.data.device
-      buffer, recv_buf = bytes2tensor(buffer, buf.data.size(), buf.data.dtype)
-      buf.add_(recv_buf.to(device), alpha = alpha)
+  for tensor in tensors:
+    device = tensor.data.device
+    buffer, recv = bytes2tensor(buffer, tensor.data.size(), tensor.data.dtype)
+    tensor.data.add_(recv.to(device), alpha = alpha)
+
+def send_model(model, dst = 0, with_grads = False):
+  size = 0
+  size += send_tensors(model.parameters(), dst)
+  if with_grads:
+    size += send_tensors(map(lambda p: p.grad, model.parameters()), dst)
+  size += send_tensors(model.buffers(), dst)
   return size
 
-def recv_params(params, alpha = 1.0, src = 0, with_grad = False, model_buffer = None):
-  size = recv_params_(params, alpha, src, with_grad, model_buffer)
-  torch.cuda.empty_cache()
-  gc.collect()
+def recv_model(model, src = 0, with_grads = False, alpha = 1.0):
+  size = 0
+  size += recv_tensors(src, alpha)
+  if with_grads:
+    size += recv_tensors(map(lambda p: p.grad, model.parameters()), src, alpha)
+  size += recv_tensors(model.buffers(), src, alpha)
   return size
-
+  
 def pack_segs(segs, width):
   buffer = bytearray()
   rest_len = 0
@@ -115,13 +102,12 @@ def pack_segs(segs, width):
     byte_num = pack_len//8
     rest_len = pack_len%8
     buffer.extend(pack('>Q', c_uint64(seg).value)[:byte_num])
-    rest_byte = (seg << (byte_num*8))
+    rest_byte = c_uint64(seg << (byte_num*8)).value
   if rest_len > 0:
     buffer.extend(pack('>Q', c_uint64(rest_byte).value)[:1])
   return buffer
 
-def unpack_segs(buffer, width):
-  segs = []
+def unpack_segs(segs, buffer, width):
   last_rest = 0
   while len(buffer)*8 >= width+last_rest:
     cur_rest = width
@@ -139,12 +125,13 @@ def unpack_segs(buffer, width):
         buffer = buffer[1:]
       else:
         last_rest = 8-lsb
-    segs.append(seg)
-  return segs
+    segs.send(seg)
+  segs.send(EOP)
+  segs.close()
 
 def send_segs(segs, scale, width, dst = 0):
-  dist.send(torch.tensor([scale]), dst)
   buffer = pack_segs(segs, width)
+  dist.send(torch.tensor([scale]), dst)
   send_bytes(buffer, dst)
   return 4+len(buffer)
 
@@ -152,6 +139,8 @@ def recv_segs(src, width):
   scale = torch.zeros(1)
   dist.recv(scale, src)
   scale = scale.item()
-  buffer = recv_bytes()
-  segs = unpack_segs(buffer, width)
-  return (segs, scale, 4+len(buffer))
+  buffer = recv_bytes(src)
+  recv_conn, send_conn = Pipe(duplex = False)
+  p = Process(target = unpack_segs, args = (send_conn, buffer, width))
+  p.start()
+  return (recv_conn, scale, 4+len(buffer), p)

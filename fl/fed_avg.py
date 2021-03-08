@@ -5,7 +5,7 @@ from torch.optim import SGD
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader
 from . import flag, config, distributed
-from .communication import send_params, recv_params
+from .communication import send_model, recv_model
 from .utils import test_accuracy, debug_print, save_lists, decay_learning_rate, clear_params
 from .mobilenet import mobilenet_v2
 
@@ -23,7 +23,7 @@ def client_fn(rank, world_size, name, dataset):
   avg_loss = []
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters(), model.buffers())
-    recv_params(model.parameters(), model_buffer = model.buffers())
+    recv_model(model))
     datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle = True)
     running_loss = 0
     for j in range(LOCAL_EPOCH):
@@ -35,7 +35,7 @@ def client_fn(rank, world_size, name, dataset):
         sgd.step()
       decay_learning_rate(sgd, alpha = 0.9, min_lr = 1e-5)
     avg_loss.append(running_loss/(j*len(datas)))
-    send_params(model.parameters(), model_buffer = model.buffers())
+    send_model(model)
   save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
@@ -50,14 +50,13 @@ def server_fn(rank, world_size, name, testset):
   for i in range(GLOBAL_EPOCH):
     debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
     for j in range(1, world_size):
-      downloaded += send_params(params = model.parameters(), dst = j, model_buffer = model.buffers())
+      downloaded += send_model(model, dst = j)
     clear_params(model.parameters(), model.buffers())
     for j in range(1, world_size):
-      uploaded += recv_params(
-        params = model.parameters(),
+      uploaded += recv_model(
+        model, 
         alpha = config.data_distribution[j-1],
         src = j,
-        model_buffer = model.buffers(),
       )
     uploaded_bytes.append(uploaded)
     downloaded_bytes.append(downloaded)
