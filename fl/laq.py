@@ -6,15 +6,13 @@ from functools import reduce
 from torch.nn import CrossEntropyLoss
 from . import flag, distributed
 from .mobilenet import mobilenet_v2
-from .sgd import FedSGD
-from .communication import recv_params, send_params
-from .utils import clear_params, debug_print, test_accuracy
+from .communication import recv_model, send_model, send_tensors, recv_tensors
+from .utils import clear_params, debug_print, test_accuracy, get_marker
 from .data import unlimited_data_loader
-from .quantize import QuantizedBuffer
-from time import time
+from .quantize import QuantizedBuffer, QGD
 
-GLOBAL_EPOCH = 10000
-LOCAL_EPOCH = 100
+GLOBAL_EPOCH = 5000
+LOCAL_EPOCH = 10
 BATCH_SIZE = 4
 TARGET_WIDTH = 4
 
@@ -25,27 +23,25 @@ def client_fn(rank, world_size, name, dataset):
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
 
-  lr = 1e-3
-  min_lr = 1e-5
-  model = mobilenet_v2(num_classes = 10)
-  criterion = CrossEntropyLoss()
-  sgd = FedSGD(model.parameters(), lr, momentum = 0.4)
-  datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle = True)
-
   model.to(gpu)
   clear_params(model.parameters())
   recv_params(model.parameters())
   model.train()
 
-  si = 0.1
-  acc_upd = torch.zeros(1)
+  si = 0.8
   t = 0
   t_m = 10
   buf_error = 0
-  buffer_num = reduce(lambda count, _: count+1, model.buffers(), 0)
-  param_num = reduce(lambda count, _: count+1, model.parameters(), 0)
-  qb_buffers = QuantizedBuffer(buffer_num, TARGET_WIDTH, gpu)
-  qb_grads = QuantizedBuffer(param_num, TARGET_WIDTH, gpu)
+  param_sizes = map(lambda param: param.data.size, model.paramters())
+  qb_grads = QuantizedBuffer(parma_sizes, TARGET_WIDTH, gpu)
+
+  lr = 1e-3
+  min_lr = 1e-5
+  model = mobilenet_v2(num_classes = 10)
+  criterion = CrossEntropyLoss()
+  qgd = QGD(model.parameters(), qbuf = qb_grads, lr = lr, momentum = 0.4)
+  datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle = True)
+  acc_upd = 0
 
   avg_loss = []
   running_loss = 0
@@ -59,34 +55,27 @@ def client_fn(rank, world_size, name, dataset):
     if (i+1)%LOCAL_EPOCH == 0:
       avg_loss.append(running_loss/LOCAL_EPOCH)
       running_loss = 0
-    sgd.step()
-    qb_buffers.update(model.buffers())
-    qb_grads.update(map(lambda param: param.grad, model.parameters()))
+    qgd.step()
     m = world_size-1
     grad_diff = qb_grads.diffs_norm
     error = qb_grads.error
-    if grad_diff <= acc_upd.item()/(lr**2*m**2)+3*(error+buf_error) and t < t_m:
+    skip_comm = grad_diff <= (acc_upd*si/(t+1))/(lr**2*m**2)+3*(error+buf_error) and t <= t_m
+    if skip_comm:
       dist.send(torch.tensor(False), dst = 0)
       t += 1
+      buf_error = error
+      temp = torch.zeros(1).to(gpu)
     else:
       dist.send(torch.tensor(True), dst = 0)
       qb_grads.send_to(0)
-      qb_buffers.send_to(0)
       t = 0
-      acc_upd.data.fill_(0)
-    buf_error = error
-    qb_grads.recv_from(0)
-    qb_buffers.recv_from(0)
-    qb_grads.wait_recv()
-    qb_buffers.wait_recv()
-    qb_grads.step(map(lambda param: param.grad, model.parameters()))
-    qb_buffers.step(model.buffers())
-    temp = torch.zeros(1)
-    for param in model.parameters():
-      param.grad.mul_(lr)
-      torch.norm(param.grad.to(cpu), p = 2, out = temp)
-      acc_upd.add_(temp.pow_(2), alpha = si)
-      param.data.add_(param.grad)
+      buf_error = 0
+      clear_params(model.parameters())
+      recv_model(model)
+      qb_grads.step()
+    upd = torch.zeros(1)
+    dist.recv(upd, src = 1)
+    acc_upd += upd.item()
     lr = max(lr*0.9979, min_lr)
 
 def server_fn(rank, world_size, name, testset):
@@ -97,10 +86,8 @@ def server_fn(rank, world_size, name, testset):
   min_lr = 1e-5
   model = mobilenet_v2(num_classes = 10)
 
-  buffer_num = reduce(lambda count, _: count+1, model.buffers(), 0)
-  param_num = reduce(lambda count, _: count+1, model.parameters(), 0)
-  qb_buffers = [QuantizedBuffer(buffer_num, TARGET_WIDTH, gpu) for _ in range(world_size)]
-  qb_grads = [QuantizedBuffer(param_num, TARGET_WIDTH, gpu) for _ in range(world_size)]
+  param_sizes = map(lambda param: param.data.size, model.parameters())
+  qb_grads = [QuantizedBuffer(param_sizes, TARGET_WIDTH, gpu) for _ in range(world_size-1)]
   t = [0 for i in range(1, world_size)]
 
   uploaded_bytes = []
@@ -109,13 +96,14 @@ def server_fn(rank, world_size, name, testset):
   uploaded = int(0)
   downloaded = int(0)
 
-  for param in model.parameters():
-    param.grad = param.data.clone().detach().fill_(0)
+  marker = get_marker()
+
   model.to(gpu)
   for i in range(1, world_size):
-    downloaded += send_params(model.parameters(), dst = i)
+    downloaded += send_model(model, dst = i)
   
   for i in range(GLOBAL_EPOCH):
+   #marker('进入循环%d'%i)
     if (i+1)%LOCAL_EPOCH == 0:
       debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
     upload_count = 0
@@ -127,34 +115,34 @@ def server_fn(rank, world_size, name, testset):
         t[j-1] = 0
       else:
         t[j-1] += 1
+   #marker('本次循环的客户端通信数量为%d'%upload_count)
     if upload_count != 0:
       alpha = 1/upload_count
-    else:
-      alpha = 0
     for j in range(1, world_size):
       if t[j-1] == 0:
-        uploaded += qb_grads[j].recv_from(j)
-        uploaded += qb_buffers[j].recv_from(j)
+        uploaded += qb_grads[j-1].recv_from(j)
+   #marker('来自客户端的数据收集完成，正在解码')
+    upds = [torch.zeros(param.size()).to(gpu) for param in model.parameters()]
     for j in range(1, world_size):
       if t[j-1] == 0:
-        qb_grads[j].wait_recv()
-        qb_grads[j].step(map(lambda param: param.grad, model.parameters()), alpha)
-        qb_buffers[j].wait_recv()
-        qb_buffers[j].step(model.buffers(), alpha)
-    qb_grads[0].update(map(lambda param: param.grad, model.parameters()))
-    qb_buffers[0].update(model.buffers())
+        qb_grads[j-1].wait_recv()
+        qb_grads[j-1].step()
+        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers()):
+          upd.add_(grad, alpha = lr*alpha)
+          param.data.add_(grad, alpha = lr*alpha)
+       #marker('来自客户端%d的数据解码完成'%j)
+    upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p = 2)), upds, torch.zeros(1).to(gpu))
     for j in range(1, world_size):
-      downloaded += qb_grads[0].send_to(j)
-      downloaded += qb_buffers[0].send_to(j)
-      downloaded += 8
-    for param in model.parameters():
-      param.data.add_(param.grad, alpha = lr)
+      if t[j-1] == 0:
+        downloaded += send_model(model, dst = j)
+      dist.send(upd, dst = j)
+     #marker('向客户端%d发送数据完成'%j)
     if (i+1)%LOCAL_EPOCH == 0:
       downloaded_bytes.append(downloaded)
       uploaded_bytes.append(uploaded)
       accuracy = test_accuracy(model, testset, gpu)
       accuracies.append(accuracy)
-      debug_print("正确率：%2.2lf%%"%(accuracy*100))
+      marker("正确率：%2.2lf%%"%(accuracy*100))
     lr = max(lr*0.997, min_lr)
   save_lists('%s.acc.txt'%name,
     accuracies,

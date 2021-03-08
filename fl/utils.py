@@ -1,6 +1,7 @@
 import torch
 import sys
 from sys import stdout
+from time import time
 from itertools import chain
 from torch.utils.data import DataLoader
 
@@ -59,3 +60,13 @@ def clear_params(params, buffer = None):
   if buffer != None:
     for buf in buffer:
       buf.data.fill_(0)
+
+def get_marker():
+  last_epoch = time()
+  def marker(msg):
+    nonlocal last_epoch
+    now = time()
+    debug_print(msg, end = '，')
+    debug_print('用时%.2lf秒'%(now-last_epoch))
+    last_epoch = now
+  return marker
