@@ -52,7 +52,7 @@ def decay_learning_rate(optimizer, alpha, min_lr):
     new_lr = param_group['lr']*alpha
     param_group['lr'] = max(new_lr, min_lr)
 
-def clear_params(params, buffer = None):
+def clear_params(params, buffer=None):
   for param in params:
     param.data.fill_(0)
     if param.data.grad != None:
@@ -66,7 +66,7 @@ def get_marker():
   def marker(msg):
     nonlocal last_epoch
     now = time()
-    debug_print(msg, end = '，')
+    debug_print(msg, end='，')
     debug_print('用时%.2lf秒'%(now-last_epoch))
     last_epoch = now
   return marker

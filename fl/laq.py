@@ -11,7 +11,7 @@ from .utils import clear_params, debug_print, test_accuracy, get_marker
 from .data import unlimited_data_loader
 from .quantize import QuantizedBuffer, QGD
 
-GLOBAL_EPOCH = 5000
+GLOBAL_EPOCH = 10000
 LOCAL_EPOCH = 10
 BATCH_SIZE = 4
 TARGET_WIDTH = 4
@@ -23,25 +23,25 @@ def client_fn(rank, world_size, name, dataset):
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
 
-  model.to(gpu)
-  clear_params(model.parameters())
-  recv_params(model.parameters())
-  model.train()
+  lr = 1e-3
+  min_lr = 1e-5
+  model = mobilenet_v2(num_classes=10)
+  criterion = CrossEntropyLoss()
+  param_sizes = map(lambda param: param.data.size(), model.parameters())
+  qb_grads = QuantizedBuffer(param_sizes, TARGET_WIDTH, gpu)
+  qgd = QGD(model.parameters(), qbuf = qb_grads, lr = lr, momentum=0.4)
+  datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle=True)
+  acc_upd = 0
 
   si = 0.8
   t = 0
   t_m = 10
   buf_error = 0
-  param_sizes = map(lambda param: param.data.size, model.paramters())
-  qb_grads = QuantizedBuffer(parma_sizes, TARGET_WIDTH, gpu)
 
-  lr = 1e-3
-  min_lr = 1e-5
-  model = mobilenet_v2(num_classes = 10)
-  criterion = CrossEntropyLoss()
-  qgd = QGD(model.parameters(), qbuf = qb_grads, lr = lr, momentum = 0.4)
-  datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle = True)
-  acc_upd = 0
+  model.to(gpu)
+  clear_params(model.parameters())
+  recv_model(model)
+  model.train()
 
   avg_loss = []
   running_loss = 0
@@ -61,12 +61,11 @@ def client_fn(rank, world_size, name, dataset):
     error = qb_grads.error
     skip_comm = grad_diff <= (acc_upd*si/(t+1))/(lr**2*m**2)+3*(error+buf_error) and t <= t_m
     if skip_comm:
-      dist.send(torch.tensor(False), dst = 0)
+      dist.send(torch.tensor(False), dst=0)
       t += 1
       buf_error = error
-      temp = torch.zeros(1).to(gpu)
     else:
-      dist.send(torch.tensor(True), dst = 0)
+      dist.send(torch.tensor(True), dst=0)
       qb_grads.send_to(0)
       t = 0
       buf_error = 0
@@ -74,7 +73,7 @@ def client_fn(rank, world_size, name, dataset):
       recv_model(model)
       qb_grads.step()
     upd = torch.zeros(1)
-    dist.recv(upd, src = 1)
+    recv_tensors([upd], src=0)
     acc_upd += upd.item()
     lr = max(lr*0.9979, min_lr)
 
@@ -84,9 +83,9 @@ def server_fn(rank, world_size, name, testset):
 
   lr = 1e-3
   min_lr = 1e-5
-  model = mobilenet_v2(num_classes = 10)
+  model = mobilenet_v2(num_classes=10)
 
-  param_sizes = map(lambda param: param.data.size, model.parameters())
+  param_sizes = map(lambda param: param.data.size(), model.parameters())
   qb_grads = [QuantizedBuffer(param_sizes, TARGET_WIDTH, gpu) for _ in range(world_size-1)]
   t = [0 for i in range(1, world_size)]
 
@@ -101,12 +100,12 @@ def server_fn(rank, world_size, name, testset):
   model.to(gpu)
   model.eval()
   for i in range(1, world_size):
-    downloaded += send_model(model, dst = i)
+    downloaded += send_model(model, dst=i)
   
   for i in range(GLOBAL_EPOCH):
    #marker('进入循环%d'%i)
     if (i+1)%LOCAL_EPOCH == 0:
-      debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
+      debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end=' ')
     upload_count = 0
     will_recv = torch.tensor(False)
     for j in range(1, world_size):
@@ -128,15 +127,15 @@ def server_fn(rank, world_size, name, testset):
       if t[j-1] == 0:
         qb_grads[j-1].wait_recv()
         qb_grads[j-1].step()
-        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers()):
-          upd.add_(grad, alpha = lr*alpha)
-          param.data.add_(grad, alpha = lr*alpha)
+        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers):
+          upd.add_(grad, alpha=-lr*alpha)
+          param.data.add_(grad, alpha=-lr*alpha)
        #marker('来自客户端%d的数据解码完成'%j)
-    upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p = 2)), upds, torch.zeros(1).to(gpu))
+    upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p=2)), upds, torch.zeros(1).to(gpu))
     for j in range(1, world_size):
       if t[j-1] == 0:
-        downloaded += send_model(model, dst = j)
-      dist.send(upd, dst = j)
+        downloaded += send_model(model, dst=j)
+      send_tensors([upd], dst=j)
      #marker('向客户端%d发送数据完成'%j)
     if (i+1)%LOCAL_EPOCH == 0:
       downloaded_bytes.append(downloaded)
@@ -152,7 +151,7 @@ def server_fn(rank, world_size, name, testset):
     downloaded_bytes
   )
 
-def train(datasets, testset, is_iid = True):
+def train(datasets, testset, is_iid=True):
   name = 'LAQ'+('-iid' if is_iid else '-non-iid')
   distributed.simulate(
     server_fn = server_fn,

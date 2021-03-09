@@ -12,5 +12,6 @@ command="nohup python3"$2" -m fl."$1""$extra_param
 
 echo $command
 
+killall python3 2> /dev/null
 rm -rf nohup.out
 $command &
