@@ -35,7 +35,7 @@ class QuantizedBuffer(object):
     self.scale = radius*2/((1<<self.data_width)-1)
     self.diffs_norm = 0
     for diff in diffs:
-      result_tensor = diff.add(radius).div_(self.scale).add_(0.5).int()
+      result_tensor = diff.add(radius).div_(self.scale).add_(0.5).long()
       self.result.extend(result_tensor.flatten().tolist())
       qd = result_tensor.float().mul_(self.scale).sub_(radius)
       self.error += torch.norm(diff.sub_(qd), p = 2).pow_(2).item()

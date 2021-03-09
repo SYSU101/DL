@@ -11,7 +11,7 @@ from .utils import clear_params, debug_print, test_accuracy, get_marker
 from .data import unlimited_data_loader
 from .quantize import QuantizedBuffer, QGD
 
-GLOBAL_EPOCH = 5000
+GLOBAL_EPOCH = 10000
 LOCAL_EPOCH = 10
 BATCH_SIZE = 4
 TARGET_WIDTH = 4
@@ -22,11 +22,6 @@ def calc_update(params, out, lr, si):
 def client_fn(rank, world_size, name, dataset):
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
-
-  model.to(gpu)
-  clear_params(model.parameters())
-  recv_params(model.parameters())
-  model.train()
 
   si = 0.8
   t = 0
@@ -42,6 +37,11 @@ def client_fn(rank, world_size, name, dataset):
   qgd = QGD(model.parameters(), qbuf = qb_grads, lr = lr, momentum = 0.4)
   datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle = True)
   acc_upd = 0
+
+  model.to(gpu)
+  clear_params(model.parameters())
+  recv_params(model.parameters())
+  model.train()
 
   avg_loss = []
   running_loss = 0
@@ -129,8 +129,8 @@ def server_fn(rank, world_size, name, testset):
         qb_grads[j-1].wait_recv()
         qb_grads[j-1].step()
         for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers()):
-          upd.add_(grad, alpha = lr*alpha)
-          param.data.add_(grad, alpha = lr*alpha)
+          upd.add_(grad, alpha = -lr*alpha)
+          param.data.add_(grad, alpha = -lr*alpha)
        #marker('来自客户端%d的数据解码完成'%j)
     upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p = 2)), upds, torch.zeros(1).to(gpu))
     for j in range(1, world_size):
