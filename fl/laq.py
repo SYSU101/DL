@@ -23,24 +23,24 @@ def client_fn(rank, world_size, name, dataset):
   gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
 
-  si = 0.8
-  t = 0
-  t_m = 10
-  buf_error = 0
-  param_sizes = map(lambda param: param.data.size, model.paramters())
-  qb_grads = QuantizedBuffer(parma_sizes, TARGET_WIDTH, gpu)
-
   lr = 1e-3
   min_lr = 1e-5
   model = mobilenet_v2(num_classes=10)
   criterion = CrossEntropyLoss()
+  param_sizes = map(lambda param: param.data.size(), model.parameters())
+  qb_grads = QuantizedBuffer(param_sizes, TARGET_WIDTH, gpu)
   qgd = QGD(model.parameters(), qbuf = qb_grads, lr = lr, momentum=0.4)
   datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle=True)
   acc_upd = 0
 
+  si = 0.8
+  t = 0
+  t_m = 10
+  buf_error = 0
+
   model.to(gpu)
   clear_params(model.parameters())
-  recv_params(model.parameters())
+  recv_model(model)
   model.train()
 
   avg_loss = []
@@ -64,7 +64,6 @@ def client_fn(rank, world_size, name, dataset):
       dist.send(torch.tensor(False), dst=0)
       t += 1
       buf_error = error
-      temp = torch.zeros(1).to(gpu)
     else:
       dist.send(torch.tensor(True), dst=0)
       qb_grads.send_to(0)
@@ -74,7 +73,7 @@ def client_fn(rank, world_size, name, dataset):
       recv_model(model)
       qb_grads.step()
     upd = torch.zeros(1)
-    dist.recv(upd, src=1)
+    recv_tensors([upd], src=0)
     acc_upd += upd.item()
     lr = max(lr*0.9979, min_lr)
 
@@ -86,7 +85,7 @@ def server_fn(rank, world_size, name, testset):
   min_lr = 1e-5
   model = mobilenet_v2(num_classes=10)
 
-  param_sizes = map(lambda param: param.data.size, model.parameters())
+  param_sizes = map(lambda param: param.data.size(), model.parameters())
   qb_grads = [QuantizedBuffer(param_sizes, TARGET_WIDTH, gpu) for _ in range(world_size-1)]
   t = [0 for i in range(1, world_size)]
 
@@ -128,7 +127,7 @@ def server_fn(rank, world_size, name, testset):
       if t[j-1] == 0:
         qb_grads[j-1].wait_recv()
         qb_grads[j-1].step()
-        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers()):
+        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers):
           upd.add_(grad, alpha=-lr*alpha)
           param.data.add_(grad, alpha=-lr*alpha)
        #marker('来自客户端%d的数据解码完成'%j)
@@ -136,7 +135,7 @@ def server_fn(rank, world_size, name, testset):
     for j in range(1, world_size):
       if t[j-1] == 0:
         downloaded += send_model(model, dst=j)
-      dist.send(upd, dst=j)
+      send_tensors([upd], dst=j)
      #marker('向客户端%d发送数据完成'%j)
     if (i+1)%LOCAL_EPOCH == 0:
       downloaded_bytes.append(downloaded)

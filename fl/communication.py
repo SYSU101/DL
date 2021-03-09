@@ -62,7 +62,7 @@ def recv_bytes(src):
 def send_tensors(tensors, dst=0):
   buffer = bytearray()
   for tensor in tensors:
-    tensor2bytes(param.data, buffer)
+    tensor2bytes(tensor.data, buffer)
   send_bytes(buffer, dst)
   return len(buffer)
 
@@ -73,6 +73,7 @@ def recv_tensors(tensors, src=0, alpha=1.0):
     device = tensor.data.device
     buffer, recv = bytes2tensor(buffer, tensor.data.size(), tensor.data.dtype)
     tensor.data.add_(recv.to(device), alpha=alpha)
+  return size
 
 def send_model(model, dst=0, with_grads=False):
   size = 0
@@ -84,7 +85,7 @@ def send_model(model, dst=0, with_grads=False):
 
 def recv_model(model, src=0, with_grads=False, alpha=1.0):
   size = 0
-  size += recv_tensors(src, alpha)
+  size += recv_tensors(model.parameters(), src, alpha)
   if with_grads:
     size += recv_tensors(map(lambda p: p.grad, model.parameters()), src, alpha)
   size += recv_tensors(model.buffers(), src, alpha)
