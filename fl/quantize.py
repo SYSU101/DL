@@ -30,7 +30,7 @@ class QuantizedBuffer(object):
     radius = 0
     temp = torch.zeros(1).to(self.device)
     for diff in diffs:
-      torch.norm(input = diff, p = float('inf'), out = temp)
+      torch.norm(input = diff, p = float('inf'), out=temp)
       radius = max(temp.item(), radius)
     self.scale = radius*2/((1<<self.data_width)-1)
     self.diffs_norm = 0
@@ -38,9 +38,9 @@ class QuantizedBuffer(object):
       result_tensor = diff.add(radius).div_(self.scale).add_(0.5).long()
       self.result.extend(result_tensor.flatten().tolist())
       qd = result_tensor.float().mul_(self.scale).sub_(radius)
-      self.error += torch.norm(diff.sub_(qd), p = 2).pow_(2).item()
+      self.error += torch.norm(diff.sub_(qd), p=2).pow_(2).item()
       diff.copy_(qd)
-      torch.norm(diff, p = 2, out = temp)
+      torch.norm(diff, p = 2, out=temp)
       self.diffs_norm += temp.pow_(2).item()
 
   def step(self):
@@ -49,7 +49,7 @@ class QuantizedBuffer(object):
     for buffer in self.buffers:
       num_buffer = buffer.size().numel()
       diff, result = result[:num_buffer], result[num_buffer:]
-      diff = torch.tensor(diff, device = self.device).float().resize_(buffer.size()).mul_(self.scale)
+      diff = torch.tensor(diff, device=self.device).float().resize_(buffer.size()).mul_(self.scale)
       buffer.add_(diff).sub_(radius)
 
   def send_to(self, dst):
@@ -60,7 +60,7 @@ class QuantizedBuffer(object):
     send_bytes(self.result_buffer, dst)
     return size
 
-  def recv_from(self, src, with_buffers = False):
+  def recv_from(self, src, with_buffers=False):
     recv_conn, self.scale, recv_len, self.recv_proc = recv_segs(src, self.data_width)
     self.result.clear()
     self.result_buffer = None

@@ -15,16 +15,16 @@ BATCH_SIZE = 4
 
 def client_fn(rank, world_size, name, dataset):
   device = torch.device('cuda:0')
-  model = mobilenet_v2(num_classes = 10)
+  model = mobilenet_v2(num_classes=10)
   model.to(device)
   criterion = CrossEntropyLoss()
-  sgd = SGD(model.parameters(), lr = 1e-3, momentum = 0.4)
+  sgd = SGD(model.parameters(), lr = 1e-3, momentum=0.4)
   model.train()
   avg_loss = []
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters(), model.buffers())
     recv_model(model))
-    datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle = True)
+    datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle=True)
     running_loss = 0
     for j in range(LOCAL_EPOCH):
       for data, target in datas:
@@ -33,14 +33,14 @@ def client_fn(rank, world_size, name, dataset):
         running_loss += loss.item()
         loss.backward()
         sgd.step()
-      decay_learning_rate(sgd, alpha = 0.9, min_lr = 1e-5)
+      decay_learning_rate(sgd, alpha = 0.9, min_lr=1e-5)
     avg_loss.append(running_loss/(j*len(datas)))
     send_model(model)
   save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
   device = torch.device('cuda:0')
-  model = mobilenet_v2(num_classes = 10)
+  model = mobilenet_v2(num_classes=10)
   model.to(device)
   uploaded_bytes = []
   downloaded_bytes = []
@@ -48,9 +48,9 @@ def server_fn(rank, world_size, name, testset):
   uploaded = int(0)
   downloaded = int(0)
   for i in range(GLOBAL_EPOCH):
-    debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end = ' ')
+    debug_print("训练中...进度：%2.2lf%%"%(i/GLOBAL_EPOCH*100), end=' ')
     for j in range(1, world_size):
-      downloaded += send_model(model, dst = j)
+      downloaded += send_model(model, dst=j)
     clear_params(model.parameters(), model.buffers())
     for j in range(1, world_size):
       uploaded += recv_model(
@@ -70,7 +70,7 @@ def server_fn(rank, world_size, name, testset):
     downloaded_bytes
   )
 
-def train(datasets, testset, is_iid = True):
+def train(datasets, testset, is_iid=True):
   name = 'FedAvg'+('-iid' if is_iid else '-non-iid')
   distributed.simulate(
     server_fn = server_fn,

@@ -8,4 +8,4 @@ def norm_layer(features):
   return base
 
 def mobilenet_v2(*args, **kwargs):
-  return models.mobilenet_v2(*args, norm_layer = norm_layer, **kwargs)
+  return models.mobilenet_v2(*args, norm_layer=norm_layer, **kwargs)

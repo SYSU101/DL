@@ -33,14 +33,14 @@ def get_byte_size(dtype):
   return byte_size.get(dtype)
 
 def tensor2bytes(tensor, buffer):
-  fmt = get_fmt_code(tensor.dtype).substitute(num = '')
+  fmt = get_fmt_code(tensor.dtype).substitute(num='')
   for num in tensor.flatten().tolist():
     buffer.extend(pack(fmt, num))
 
 def bytes2tensor(buffer, size, dtype):
   bsize = get_byte_size(dtype)
   num = size.numel()
-  fmt = get_fmt_code(dtype).substitute(num = num)
+  fmt = get_fmt_code(dtype).substitute(num=num)
   buffer, rest = buffer[:num*bsize], buffer[num*bsize:]
   tensor = Tensor(unpack(fmt, buffer))
   tensor.resize_(size)
@@ -59,22 +59,22 @@ def recv_bytes(src):
   dist.recv(buffer, src)
   return bytes(buffer.tolist())
 
-def send_tensors(tensors, dst = 0):
+def send_tensors(tensors, dst=0):
   buffer = bytearray()
   for tensor in tensors:
     tensor2bytes(param.data, buffer)
   send_bytes(buffer, dst)
   return len(buffer)
 
-def recv_tensors(tensors, src = 0, alpha = 1.0):
+def recv_tensors(tensors, src=0, alpha=1.0):
   buffer = recv_bytes(src)
   size = len(buffer)
   for tensor in tensors:
     device = tensor.data.device
     buffer, recv = bytes2tensor(buffer, tensor.data.size(), tensor.data.dtype)
-    tensor.data.add_(recv.to(device), alpha = alpha)
+    tensor.data.add_(recv.to(device), alpha=alpha)
 
-def send_model(model, dst = 0, with_grads = False):
+def send_model(model, dst=0, with_grads=False):
   size = 0
   size += send_tensors(model.parameters(), dst)
   if with_grads:
@@ -82,7 +82,7 @@ def send_model(model, dst = 0, with_grads = False):
   size += send_tensors(model.buffers(), dst)
   return size
 
-def recv_model(model, src = 0, with_grads = False, alpha = 1.0):
+def recv_model(model, src=0, with_grads=False, alpha=1.0):
   size = 0
   size += recv_tensors(src, alpha)
   if with_grads:
@@ -128,7 +128,7 @@ def unpack_segs(segs, buffer, width):
   segs.send(EOP)
   segs.close()
 
-def send_segs(segs, scale, width, dst = 0):
+def send_segs(segs, scale, width, dst=0):
   buffer = pack_segs(segs, width)
   dist.send(torch.tensor([scale]), dst)
   send_bytes(buffer, dst)
@@ -139,7 +139,7 @@ def recv_segs(src, width):
   dist.recv(scale, src)
   scale = scale.item()
   buffer = recv_bytes(src)
-  recv_conn, send_conn = Pipe(duplex = False)
-  p = Process(target = unpack_segs, args = (send_conn, buffer, width))
+  recv_conn, send_conn = Pipe(duplex=False)
+  p = Process(target=unpack_segs, args=(send_conn, buffer, width))
   p.start()
   return (recv_conn, scale, 4+len(buffer), p)
