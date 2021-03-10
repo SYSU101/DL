@@ -119,10 +119,12 @@ def server_fn(rank, world_size, name, testset):
    #marker('本次循环的客户端通信数量为%d'%upload_count)
     if upload_count != 0:
       alpha = 1/upload_count
+      for buffer in model.buffers():
+        buffer.fill_(0)
     for j in range(1, world_size):
       if t[j-1] == 0:
         uploaded += qb_grads[j-1].recv_from(j)
-        recv_tensors(model.buffers(), src=j)
+        uploaded += recv_tensors(model.buffers(), src=j, alpha=alpha)
    #marker('来自客户端的数据收集完成，正在解码')
     upds = [torch.zeros(param.size()).to(gpu) for param in model.parameters()]
     for j in range(1, world_size):
