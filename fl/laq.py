@@ -67,6 +67,7 @@ def client_fn(rank, world_size, name, dataset):
     else:
       dist.send(torch.tensor(True), dst=0)
       qb_grads.send_to(0)
+      send_tensors(model.buffers(), dst=0)
       t = 0
       buf_error = 0
       clear_params(model.parameters())
@@ -121,6 +122,7 @@ def server_fn(rank, world_size, name, testset):
     for j in range(1, world_size):
       if t[j-1] == 0:
         uploaded += qb_grads[j-1].recv_from(j)
+        recv_tensors(model.buffers(), src=j)
    #marker('来自客户端的数据收集完成，正在解码')
     upds = [torch.zeros(param.size()).to(gpu) for param in model.parameters()]
     for j in range(1, world_size):
