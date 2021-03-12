@@ -8,8 +8,13 @@ from .communication import send_bytes, pack_segs, recv_segs, EOP
 from .utils import debug_print
 
 class QuantizedBuffer(object):
-  def __init__(self, sizes, data_width, device):
-    self.buffers = [torch.zeros(size).to(device) for size in sizes]
+  def __init__(self, data_width, device, sizes=None, buffers=None):
+    if buffers != None:
+      self.buffers = buffers
+    elif sizes != None:
+      self.buffers = [torch.zeros(size).to(device) for size in sizes]
+    else:
+      raise RuntimeError('sizes and buffers should not be all None')
     self.device = device
     self.data_width = data_width
     self.scale = 0
@@ -17,12 +22,10 @@ class QuantizedBuffer(object):
     self.error = 0
     self.diffs_norm = 0
     self.recv_thread = None
-    self.result_buffer = None
 
   def update(self, datas):
     self.error = 0
     self.result.clear()
-    self.result_buffer = None
     diffs = []
     for buffer, data in zip(self.buffers, datas):
       data = data.to(self.device)
@@ -53,17 +56,15 @@ class QuantizedBuffer(object):
       buffer.add_(diff).sub_(radius)
 
   def send_to(self, dst):
-    if self.result_buffer == None:
-      self.result_buffer = pack_segs(self.result, self.data_width)
-    size = len(self.result_buffer)+getsizeof(self.scale)
-    dist.send(torch.tensor([self.scale]), dst)
-    send_bytes(self.result_buffer, dst)
+    buffer = pack_segs(self.result, self.data_width)
+    size = len(buffer)+getsizeof(self.scale)
+    dist.send(torch.tensor([self.scale], dtype=torch.float64), dst)
+    send_bytes(buffer, dst)
     return size
 
   def recv_from(self, src, with_buffers=False):
     recv_conn, self.scale, recv_len, self.recv_proc = recv_segs(src, self.data_width)
     self.result.clear()
-    self.result_buffer = None
     def recv_pipe():
       for seg in iter(recv_conn.recv, EOP):
         self.result.append(seg)

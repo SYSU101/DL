@@ -23,7 +23,7 @@ def client_fn(rank, world_size, name, dataset):
   avg_loss = []
   for i in range(GLOBAL_EPOCH):
     clear_params(model.parameters(), model.buffers())
-    recv_model(model))
+    recv_model(model)
     datas = DataLoader(dataset, batch_size = BATCH_SIZE, shuffle=True)
     running_loss = 0
     for j in range(LOCAL_EPOCH):
