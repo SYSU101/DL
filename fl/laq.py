@@ -59,7 +59,7 @@ def client_fn(rank, world_size, name, dataset):
     grad_diff = qb_grads.diffs_norm
     error = qb_grads.error
     skip_comm = grad_diff <= acc_upd/(lr**2*m**2)+3*(error+buf_error) and t <= t_m
-    # skip_comm = ((i+1)%10 != 0)
+    # skip_comm = False
     if skip_comm:
       dist.send(torch.tensor(False), dst=0)
       t += 1
@@ -71,8 +71,7 @@ def client_fn(rank, world_size, name, dataset):
       dist.send(torch.tensor(True), dst=0)
       qb_grads.send_to(0)
       send_tensors(model.buffers(), dst=0)
-      qb_grads.reset_buffer()
-      recv_tensors(qb_grads.buffers, src=0)
+      qb_grads.step()
       t = 0
       buf_error = 0
     lr = max(lr*0.9979, min_lr)
@@ -85,10 +84,8 @@ def server_fn(rank, world_size, name, testset):
   min_lr = 1e-5
   model = mobilenet_v2(num_classes=10)
 
-  param_sizes = map(lambda param: param.data.size(), model.parameters())
-  qb_grads = [QuantizedBuffer(TARGET_WIDTH, gpu, param_sizes)]
-  for _ in range(world_size-2):
-    qb_grads.append(QuantizedBuffer(TARGET_WIDTH, gpu, buffers=qb_grads[0].buffers))
+  param_sizes = list(map(lambda param: param.data.size(), model.parameters()))
+  qb_grads = [QuantizedBuffer(TARGET_WIDTH, gpu, param_sizes) for _ in range(world_size-1)]
   t = [0 for i in range(1, world_size)]
 
   uploaded_bytes = []
@@ -135,15 +132,14 @@ def server_fn(rank, world_size, name, testset):
         qb_grads[j-1].step()
         # marker('来自客户端%d的数据解码完成'%j)
     # debug_print(qb_grads[0].buffers[-1])
-    if upload_count != 0:
-      for param, upd, grad in zip(model.parameters(), upds, qb_grads[0].buffers):
-        upd.add_(grad, alpha=-lr)
-        param.data.add_(grad, alpha=-lr)
-    upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p=2)), upds, torch.zeros(1).to(gpu))
     for j in range(1, world_size):
       if t[j-1] == 0:
-        downloaded += send_tensors(qb_grads[0].buffers, dst=j)
-      else:
+        for param, upd, grad in zip(model.parameters(), upds, qb_grads[0].buffers):
+          upd.add_(grad, alpha=-lr*alpha)
+          param.data.add_(grad, alpha=-lr*alpha)
+    upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p=2)), upds, torch.zeros(1).to(gpu))
+    for j in range(1, world_size):
+      if t[j-1] != 0:
         downloaded += send_tensors([upd], dst=j)
       # marker('向客户端%d发送数据完成'%j)
     if (i+1)%LOCAL_EPOCH == 0:
