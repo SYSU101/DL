@@ -75,20 +75,22 @@ def recv_tensors(tensors, src=0, alpha=1.0):
     tensor.data.add_(recv.to(device), alpha=alpha)
   return size
 
-def send_model(model, dst=0, with_grads=False):
+def send_model(model, dst=0, with_grads=False, with_buffers=True):
   size = 0
   size += send_tensors(model.parameters(), dst)
   if with_grads:
     size += send_tensors(map(lambda p: p.grad, model.parameters()), dst)
-  size += send_tensors(model.buffers(), dst)
+  if with_buffers:
+    size += send_tensors(model.buffers(), dst)
   return size
 
-def recv_model(model, src=0, with_grads=False, alpha=1.0):
+def recv_model(model, src=0, with_grads=False, with_buffers=True, alpha=1.0):
   size = 0
   size += recv_tensors(model.parameters(), src, alpha)
   if with_grads:
     size += recv_tensors(map(lambda p: p.grad, model.parameters()), src, alpha)
-  size += recv_tensors(model.buffers(), src, alpha)
+  if with_buffers:
+    size += recv_tensors(model.buffers(), src, alpha)
   return size
   
 def pack_segs(segs, width):
@@ -136,7 +138,7 @@ def send_segs(segs, scale, width, dst=0):
   return 4+len(buffer)
 
 def recv_segs(src, width):
-  scale = torch.zeros(1)
+  scale = torch.zeros(1, dtype=torch.float64)
   dist.recv(scale, src)
   scale = scale.item()
   buffer = recv_bytes(src)

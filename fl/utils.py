@@ -52,10 +52,10 @@ def decay_learning_rate(optimizer, alpha, min_lr):
     new_lr = param_group['lr']*alpha
     param_group['lr'] = max(new_lr, min_lr)
 
-def clear_params(params, buffer=None):
+def clear_params(params, with_grads=True, buffer=None):
   for param in params:
     param.data.fill_(0)
-    if param.data.grad != None:
+    if with_grads and param.data.grad != None:
       param.grad.fill_(0)
   if buffer != None:
     for buf in buffer:
