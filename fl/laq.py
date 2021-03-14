@@ -134,7 +134,7 @@ def server_fn(rank, world_size, name, testset):
     # debug_print(qb_grads[0].buffers[-1])
     for j in range(1, world_size):
       if t[j-1] == 0:
-        for param, upd, grad in zip(model.parameters(), upds, qb_grads[0].buffers):
+        for param, upd, grad in zip(model.parameters(), upds, qb_grads[j-1].buffers):
           upd.add_(grad, alpha=-lr*alpha)
           param.data.add_(grad, alpha=-lr*alpha)
     upd = reduce(lambda acc, cur: acc.add_(torch.norm(cur, p=2)), upds, torch.zeros(1).to(gpu))
