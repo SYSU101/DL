@@ -146,3 +146,25 @@ def recv_segs(src, width):
   p = Process(target=unpack_segs, args=(send_conn, buffer, width))
   p.start()
   return (recv_conn, scale, 4+len(buffer), p)
+
+def pack_bools(bools):
+  buffers = bytearray()
+  cur_byte = 0
+  cur_mask = 1
+  for boolvar in bools:
+    if boolvar:
+      cur_byte |= cur_mask
+    cur_mask <<= 1
+    if cur_mask > 128:
+      cur_mask = 0
+      buffers.append(cur_byte)
+      cur_byte = 0
+  return buffers
+
+def unpack_bools(buffers):
+  bools = []
+  for byte in buffers:
+    for _ in range(8)
+      bools.append(byte&1 > 0)
+      byte >>= 1
+  return bools
