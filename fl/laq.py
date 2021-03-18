@@ -7,7 +7,7 @@ from torch.nn import CrossEntropyLoss
 from . import flag, distributed
 from .mobilenet import mobilenet_v2
 from .communication import recv_model, send_model, send_tensors, recv_tensors
-from .utils import clear_params, debug_print, test_accuracy, get_marker
+from .utils import clear_params, debug_print, test_accuracy, get_marker, save_lists
 from .data import unlimited_data_loader
 from .quantize import QuantizedBuffer, QGD
 
