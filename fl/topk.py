@@ -1,10 +1,13 @@
+
+import sys
 import torch
 
 from functools import reduce
 from torch.nn import CrossEntropyLoss
+from . import flag, distributed
 from .communication import *
 from .mobilenet import mobilenet_v2
-from .utils import clear_params
+from .utils import *
 from .data import unlimited_data_loader
 from .sparse import Sparser, SparseSGD, apply_sparse_grads
 
@@ -52,7 +55,8 @@ def client_fn(rank, world_size, name, dataset):
     send_bytes(pack_bools(valid), dst=0)
     send_tensors(model.buffers())
 
-def server_fn(rank, world_size, name, testset):gpu = torch.device('cuda:0')
+def server_fn(rank, world_size, name, testset):
+  gpu = torch.device('cuda:0')
   cpu = torch.device('cpu')
 
   lr = 1e-3
@@ -79,10 +83,13 @@ def server_fn(rank, world_size, name, testset):gpu = torch.device('cuda:0')
     for buffer in model.buffers():
       buffer.data.fill_(0)
     for j in range(1, world_size):
-      uploaded += recv_tensors([grad_num], src=j)
+      grad_num.fill_(0)
+      uploaded += recv_tensors([grad_num], src=j, alpha=1)
       grads = torch.zeros(grad_num)
       uploaded += recv_tensors([grads], src=j)
-      valid = unpack_bools(recv_bytes(src=j))
+      bool_bytes = recv_bytes(src=j)
+      uploaded += len(bool_bytes)
+      valid = unpack_bools(bool_bytes)
       apply_sparse_grads(model.parameters(), grads, valid, lr*alpha)
       uploaded += recv_tensors(model.buffers(), src=j, alpha=alpha)
     if (i+1)%LOCAL_EPOCH == 0:

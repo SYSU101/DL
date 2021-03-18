@@ -1,6 +1,9 @@
+import torch
+
 from heapq import *
 from torch.optim.optimizer import Optimizer, required
 from struct import pack, unpack
+from .utils import debug_print
 
 class Sparser(object):
   def __init__(self, p, tot_num):
@@ -9,7 +12,7 @@ class Sparser(object):
     self.buffers = []
     self.valid = []
   
-  def push(grads):
+  def push(self, grads):
     grads = grads.flatten().abs_().tolist()
     for grad in grads:
       valid = False
@@ -21,13 +24,13 @@ class Sparser(object):
         valid = True
       if valid:
         self.buffers.append(grad)
+      self.valid.append(valid)
   
-  def reset():
+  def reset(self):
     self.heap.clear()
-    self.outputs.clear()
     self.valid.clear()
 
-  def output():
+  def output(self):
     bi = 0
     output = []
     threshold = self.heap[0]

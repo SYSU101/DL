@@ -42,7 +42,7 @@ def bytes2tensor(buffer, size, dtype):
   num = size.numel()
   fmt = get_fmt_code(dtype).substitute(num=num)
   buffer, rest = buffer[:num*bsize], buffer[num*bsize:]
-  tensor = Tensor(unpack(fmt, buffer))
+  tensor = torch.tensor(unpack(fmt, buffer), dtype=dtype)
   tensor.resize_(size)
   return (rest, tensor)
 
@@ -156,15 +156,17 @@ def pack_bools(bools):
       cur_byte |= cur_mask
     cur_mask <<= 1
     if cur_mask > 128:
-      cur_mask = 0
+      cur_mask = 1
       buffers.append(cur_byte)
       cur_byte = 0
+  if cur_mask != 1:
+    buffers.append(cur_byte)
   return buffers
 
 def unpack_bools(buffers):
   bools = []
   for byte in buffers:
-    for _ in range(8)
+    for _ in range(8):
       bools.append(byte&1 > 0)
       byte >>= 1
   return bools
