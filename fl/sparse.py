@@ -3,7 +3,7 @@ import torch
 from heapq import *
 from torch.optim.optimizer import Optimizer, required
 from struct import pack, unpack
-from .utils import debug_print
+from .utils import debug_print, once
 
 class Sparser(object):
   def __init__(self, p, tot_num):
@@ -13,14 +13,16 @@ class Sparser(object):
     self.valid = []
   
   def push(self, grads):
-    grads = grads.flatten().abs_().tolist()
-    for grad in grads:
+    grads = grads.flatten()
+    gmags = grads.abs().tolist()
+    grads = grads.tolist()
+    for grad, gmag in zip(grads, gmags):
       valid = False
       if len(self.heap) < self.k:
-        heappush(self.heap, grad)
+        heappush(self.heap, gmag)
         valid = True
-      elif grad >= self.heap[0]:
-        heappushpop(self.heap, grad)
+      elif gmag >= self.heap[0]:
+        heappushpop(self.heap, gmag)
         valid = True
       if valid:
         self.buffers.append(grad)
@@ -29,6 +31,7 @@ class Sparser(object):
   def reset(self):
     self.heap.clear()
     self.valid.clear()
+    self.buffers.clear()
 
   def output(self):
     bi = 0
@@ -39,7 +42,7 @@ class Sparser(object):
       if valid:
         buffer = self.buffers[bi]
         bi += 1
-        if buffer >= threshold:
+        if abs(buffer) >= threshold:
           output.append(buffer)
         else:
           self.valid[vi] = False
@@ -105,20 +108,17 @@ class SparseSGD(Optimizer):
     return loss
 
 def apply_sparse_grads(params, grads, valid, lr):
-  grads = iter(grads)
+  grads = iter(grads.tolist())
+  base = 0
   for param in params:
+    grad = []
     for i in range(param.numel()):
-      if valid[i]:
-        get_el_by_offset(param, i).add_(next(grads), alpha=lr)
-    valid = valid[param.numel():]
-
-def get_el_by_offset(tensor, offset):
-  sizes = tensor.size()
-  numel = tensor.numel()
-  dim = tensor.dim()
-  for i in range(dim):
-    numel = int(numel/sizes[i])
-    index = int(offset/numel)
-    offset = offset%numel
-    tensor = tensor[index]
-  return tensor
+      if valid[base+i]:
+        grad.append(next(grads))
+      else:
+        grad.append(0)
+    grad = torch.tensor(grad, device=param.device)
+    grad.resize_(param.size())
+    param.data.add_(grad, alpha=-lr)
+    base += param.numel()
+    del grad

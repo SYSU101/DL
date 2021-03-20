@@ -24,7 +24,7 @@ def client_fn(rank, world_size, name, dataset):
   model = mobilenet_v2(num_classes=10)
   criterion = CrossEntropyLoss()
   datas = unlimited_data_loader(dataset, batch_size = BATCH_SIZE, shuffle=True)
-  param_num = reduce(lambda acc, cur: acc+1, model.parameters(), 0)
+  param_num = reduce(lambda acc, cur: acc+cur.numel(), model.parameters(), 0)
   sparser = Sparser(p=0.01, tot_num=param_num)
   sgd = SparseSGD(model.parameters(), sparser, lr, momentum=0.4)
 
@@ -92,6 +92,7 @@ def server_fn(rank, world_size, name, testset):
       valid = unpack_bools(bool_bytes)
       apply_sparse_grads(model.parameters(), grads, valid, lr*alpha)
       uploaded += recv_tensors(model.buffers(), src=j, alpha=alpha)
+    lr = max(lr*0.9979, min_lr)
     if (i+1)%LOCAL_EPOCH == 0:
       debug_print("训练中...进度：%2.2lf%%"%((i+1)/GLOBAL_EPOCH*100), end=' ')
       downloaded_bytes.append(downloaded)
