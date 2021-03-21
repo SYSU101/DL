@@ -54,6 +54,7 @@ def client_fn(rank, world_size, name, dataset):
     send_tensors([torch.tensor(output, dtype=torch.float32)])
     send_bytes(pack_bools(valid), dst=0)
     send_tensors(model.buffers())
+  save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
   gpu = torch.device('cuda:0')
@@ -100,6 +101,12 @@ def server_fn(rank, world_size, name, testset):
       accuracy = test_accuracy(model, testset, gpu)
       accuracies.append(accuracy)
       marker("正确率：%2.2lf%%"%(accuracy*100))
+  save_lists('%s.acc.txt'%name,
+    accuracies,
+    list(range(0, GLOBAL_EPOCH)),
+    uploaded_bytes,
+    downloaded_bytes
+  )
 
 def train(datasets, testset, is_iid=True):
   name = 'Top-k'+('-iid' if is_iid else '-non-iid')
