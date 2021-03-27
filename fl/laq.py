@@ -75,6 +75,7 @@ def client_fn(rank, world_size, name, dataset):
       t = 0
       buf_error = 0
     lr = max(lr*0.9979, min_lr)
+  save_lists('%s.%d.loss.txt'%(name, rank), avg_loss)
 
 def server_fn(rank, world_size, name, testset):
   gpu = torch.device('cuda:0')
@@ -154,7 +155,7 @@ def server_fn(rank, world_size, name, testset):
     lr = max(lr*0.9979, min_lr)
   save_lists('%s.acc.txt'%name,
     accuracies,
-    list(range(0, GLOBAL_EPOCH)),
+    comm_times,
     uploaded_bytes,
     downloaded_bytes
   )
