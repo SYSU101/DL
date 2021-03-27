@@ -108,7 +108,7 @@ class SparseSGD(Optimizer):
     return loss
 
 def apply_sparse_grads(params, grads, valid, lr):
-  grads = iter(grads.tolist())
+  grads = iter(grads if isinstance(grads, list) else grads.tolist())
   base = 0
   for param in params:
     grad = []
