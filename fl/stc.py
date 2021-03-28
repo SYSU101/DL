@@ -50,7 +50,8 @@ def client_fn(rank, world_size, name, dataset):
     sparser.reset()
     sgd.step()
     output, valid = sparser.output()
-    mean_grad = torch.tensor(sum(output)/len(output), dtype=torch.float64)
+    mean_grad = reduce(lambda acc, cur: acc+abs(cur), output)/len(output)
+    mean_grad = torch.tensor(mean_grad, dtype=torch.float64)
     signs = [grad > 0 for grad in output]
     send_tensors([mean_grad])
     send_bytes(pack_bools(signs), dst=0)
