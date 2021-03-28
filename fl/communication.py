@@ -131,6 +131,28 @@ def unpack_segs(segs, buffer, width):
   segs.send(EOP)
   segs.close()
 
+def unpack_segs_sync(buffer, width):
+  segs = []
+  last_rest = 0
+  while len(buffer)*8 >= width+last_rest:
+    cur_rest = width
+    seg = 0
+    while cur_rest > 0:
+      msb = 8-last_rest
+      lsb = max(8-last_rest-cur_rest, 0)
+      byte = unpack('>B', buffer[:1])[0]
+      byte &= ((1 << msb)-1)
+      byte >>= lsb
+      seg = (seg << min(8, cur_rest)) | byte
+      cur_rest -= (8-last_rest)
+      if lsb == 0:
+        last_rest = 0
+        buffer = buffer[1:]
+      else:
+        last_rest = 8-lsb
+    segs.append(seg)
+  return segs
+
 def send_segs(segs, scale, width, dst=0):
   buffer = pack_segs(segs, width)
   dist.send(torch.tensor([scale]), dst)
