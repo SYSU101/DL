@@ -162,9 +162,15 @@ def server_fn(rank, world_size, name, testset):
       accuracies.append(accuracy)
       comm_times.append(tot_comm)
       marker("正确率：%2.2lf%%"%(accuracy*100))
+  save_lists('%s.acc.txt'%name,
+    accuracies,
+    list(range(0, GLOBAL_EPOCH)),
+    uploaded_bytes,
+    downloaded_bytes
+  )
 
 def train(datasets, testset, is_iid=True):
-  name = 'Top-k'+('-iid' if is_iid else '-non-iid')
+  name = 'TLQ'+('-iid' if is_iid else '-non-iid')
   distributed.simulate(
     server_fn = server_fn,
     server_args = (name, testset),
