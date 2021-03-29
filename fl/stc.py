@@ -50,7 +50,8 @@ def client_fn(rank, world_size, name, dataset):
     sparser.reset()
     sgd.step()
     output, valid = sparser.output()
-    mean_grad = torch.tensor(sum(output)/len(output), dtype=torch.float64)
+    mean_grad = reduce(lambda acc, cur: acc+abs(cur), output)/len(output)
+    mean_grad = torch.tensor(mean_grad, dtype=torch.float64)
     signs = [grad > 0 for grad in output]
     send_tensors([mean_grad])
     send_bytes(pack_bools(signs), dst=0)
@@ -104,6 +105,12 @@ def server_fn(rank, world_size, name, testset):
       accuracy = test_accuracy(model, testset, gpu)
       accuracies.append(accuracy)
       marker("正确率：%2.2lf%%"%(accuracy*100))
+  save_lists('%s.acc.txt'%name,
+    accuracies,
+    list(range(0, GLOBAL_EPOCH)),
+    uploaded_bytes,
+    downloaded_bytes
+  )
 
 def train(datasets, testset, is_iid=True):
   name = 'STC'+('-iid' if is_iid else '-non-iid')
